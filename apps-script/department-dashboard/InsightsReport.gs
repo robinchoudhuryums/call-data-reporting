@@ -106,7 +106,7 @@ const INSIGHTS_AGENT_DAILY_MAX_DAYS_ = 45;
 var INSIGHTS_CACHE_MAX_BYTES_  = 100 * 1024;
 var INSIGHTS_CACHE_WARN_BYTES_ = 80 * 1024;
 var INSIGHTS_CACHE_DROP_BYTES_ = 90 * 1024;
-const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v30';  // v30: MD4 agentData[].trendDays (the per-agent daily series, capped) + meta.agentDailyMaxDays; v29: agentData[].daysPrior -- an agent's own vs-prior volume is per CREDITED day too; v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
+const INSIGHTS_CACHE_KEY_PREFIX = 'insights:v31';  // v31: VS-1 the queue-split verdict is taken on the report window, not the trend span; v30: MD4 agentData[].trendDays (the per-agent daily series, capped) + meta.agentDailyMaxDays; v29: agentData[].daysPrior -- an agent's own vs-prior volume is per CREDITED day too; v28: P8 the vs-team volume comparisons per CREDITED day -- agentData[].days + meta.teamAvgBasis.agentDays; v27: P6 queueHealth.trend.metrics gains avgAnswer + longestWait (seconds, null = none); v26: IDLE-2 an agent-free run drops agents with no calls in the window; v25: UX-2 queueHealth.perQueue[].wait (the queue-wait verdict); v24: D-8 queueHealth.violationsMtd is month-to-date through the WINDOW END (was the current calendar month); v23: L5 whole-roster team accumulators
 
 function getInsightsReportInit(req) {
   // Same picker UX (roster + default dates + active-in-range subset) as
@@ -469,7 +469,11 @@ function computeInsights_(dept, from, to, selectedAgents, roster,
   // gap-vs-team -- so all of it inherits one definition. Off = untouched.
   // #81: exception days leave every figure this report runs, before anything.
   const excInfo = applyExceptionDays_(srcRows, dept, { assessAgents: roster.names });
-  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
+  // VS-1 (broad-scan 2026-11-24, scan F2): the B-1 verdict belongs to the window this
+  // surface SHOWS, not the whole fetch -- the fetch reaches back to the
+  // 12-month trend start, whose old queue names otherwise "matched" and
+  // narrowed a renamed queue's current window to zero (NUM-4's rule).
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names, verdictFromIso: from });
   if (typeof logDqeReadTiming_ === 'function') {
     logDqeReadTiming_('computeInsights_:' + dept, effectiveSource, _tRead, srcRows.length);
   }

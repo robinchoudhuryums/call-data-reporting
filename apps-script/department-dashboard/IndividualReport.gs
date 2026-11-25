@@ -70,7 +70,7 @@
 // agent name still received that agent's real 12-month monthly series
 // -- the F-1 authorization gap). Bumped so cached responses computed
 // with the unfiltered trend invalidate on deploy.
-const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v14';   // v14: the vs-prior volume comparison per CREDITED day too -- cards carry priorDays + priorPerDay; v13 (P8): the team comparison per CREDITED day -- cards carry days + perDay, teamAvg carries perDay
+const INDIVIDUAL_CACHE_KEY_PREFIX = 'individual:v15';   // v15: VS-1 the queue-split verdict is taken on the report window, not the trend span; v14: the vs-prior volume comparison per CREDITED day too -- cards carry priorDays + priorPerDay; v13 (P8): the team comparison per CREDITED day -- cards carry days + perDay, teamAvg carries perDay
 
 function getIndividualReportInit(req) {
   const email = Session.getActiveUser().getEmail();
@@ -376,7 +376,11 @@ function computeIndividualReport_(dept, from, to, selectedAgents, roster,
   // shared helper; off = rows untouched, payload byte-identical).
   // #81: exception days leave every figure (cards, trend, prior, team avg).
   const excInfo = applyExceptionDays_(srcRows, dept, { assessAgents: roster.names });
-  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
+  // VS-1 (broad-scan 2026-11-24, scan F2): the B-1 verdict belongs to the window this
+  // surface SHOWS, not the whole fetch -- the fetch reaches back to the
+  // 12-month trend start, whose old queue names otherwise "matched" and
+  // narrowed a renamed queue's current window to zero (NUM-4's rule).
+  const qsInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names, verdictFromIso: from });
 
   // Aggregators.
   // aggregatedStats[agent][monthKey] = { rung, missed, answered, ttt, attTotal }

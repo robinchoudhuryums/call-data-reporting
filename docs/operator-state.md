@@ -1571,7 +1571,7 @@ When something looks wrong, before assuming a code bug, check:
     the same window, so Spanish's OFF-mode figures run roughly **8.6x** its
     real volume; 14 crossable agents span 6 department pairs. CSR/Spanish is
     the canonical pair to spot-check. Reversible
-    either way with no redeploy — the scope is part of the `summary:v27` cache
+    either way with no redeploy — the scope is part of the `summary:v28` cache
     key — and since the adoption round, of EVERY narrowed surface's cache key
     (missed / individual / insights / companyOverview / overviewChartYtd /
     agentHome / agentHist carry the scope suffix, the CORE-3 pattern) — so a
@@ -4455,7 +4455,7 @@ When something looks wrong, before assuming a code bug, check:
     count bars use (it had read the department rate). Under one
     credited day an agent has no per-day figure and the comparison is left
     blank rather than shown as a large number. Both report caches were
-    re-versioned (now `individual:v14`, `insights:v30`), so the change shows on
+    re-versioned (now `individual:v15`, `insights:v31`), so the change shows on
     the first load after the deploy. Pinned by `team-per-day.test.js`;
     rendered checks in `drive-smoke.js` (the tiles) and
     `drive-deptoutbound.js` (the Insights surfaces).

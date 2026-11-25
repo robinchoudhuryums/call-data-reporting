@@ -1236,11 +1236,13 @@ function getDepartmentSummary(req) {
   // roster read per request; the compute reads the same sheet anyway.
   // DL-5: hash EVERY dept in the set -- a combined view shows each one's agents.
   const rosterHash = rosterSetHash_(deptSet);
+  // v28 (VS-1, broad-scan 2026-11-24): the queue-split fail-open verdict is
+  // taken on the shown window, not the E5 prior window the fetch carries.
   // v27 (P6): qcd.range / rangePrior carry longestWait(Sec) and the per-day
   // tuples a 6th element (that day's longest wait).
   // v26 (NUM-1 / NUM-7 / NUM-8): csrTransfer leaves out exception days; the
   // combined grand total drops two more kinds of crossover repeat.
-  const cacheKey = 'summary:v27:' + dept + ':' + scope + ':' + subScope
+  const cacheKey = 'summary:v28:' + dept + ':' + scope + ':' + subScope
                  + ':' + from + ':' + to + ':' + summarySource + ':' + qsScope
                  + ':' + reportFreshnessTag_()
                  + ':q' + qcdFreshnessTag_()   // DATA-6: the embedded QCD snapshot's own anchor
@@ -1486,7 +1488,11 @@ function computeSummary_(dept, from, to, scope, opts) {
   // Sub-queue Phase 2: narrow each row to THIS dept's own queues before any
   // aggregation happens, so the loop below and every rule inside it are
   // unchanged. Fails open per-row -- see applyQueueSplitToRows_.
-  const splitInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names });
+  // VS-1 (broad-scan 2026-11-24, scan F2): the B-1 verdict belongs to the window this
+  // surface SHOWS, not the whole fetch -- the fetch reaches back to the
+  // prior comparison window, whose old queue names otherwise "matched" and
+  // narrowed a renamed queue's current window to zero (NUM-4's rule).
+  const splitInfo = applyQueueSplitToRows_(srcRows, dept, { assessAgents: roster.names, verdictFromIso: from });
 
   const acc = {};
 

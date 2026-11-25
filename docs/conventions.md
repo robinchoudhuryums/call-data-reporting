@@ -247,7 +247,7 @@ Per-row aggregates above; the totals row uses the same methods:
 
 - Sum columns sum the rows in the table.
 - Mean columns (ATT, Avg Abd Wait, CSR Avg Abd Wait) take a simple mean
-  of the NONZERO per-agent rows displayed (`avgNonzero_`; introduced in the summary cache's v11 bump — current prefix summary:v27).
+  of the NONZERO per-agent rows displayed (`avgNonzero_`; introduced in the summary cache's v11 bump — current prefix summary:v28).
   Idle roster agents — whose value is 0 for the range — are excluded
   from both numerator and denominator, so they don't drag the dept
   averages (owner decision, F-29 follow-up). This is the same skip-zero
@@ -564,10 +564,10 @@ complete set of prefixes.
 
 | Source file | Cache prefix | Current version |
 |---|---|---|
-| `Data.gs` (main table) | `summary:vN:` | `v27` |
+| `Data.gs` (main table) | `summary:vN:` | `v28` |
 | `Data.gs` (latest-date snap for default From/To) | `latestDate:vN:` | `v1` |
 | `Data.gs` (multi-source latest dates for freshness pill) | `latestDates:vN:` | `v2` |
-| `IndividualReport.gs` | `individual:vN:` | `v14` |
+| `IndividualReport.gs` | `individual:vN:` | `v15` |
 | `Util.gs` (`computeActiveAgentsInRange_` -- the active-in-range subset the agent pickers share) | `individual_active:vN:` | `v2` |
 | `PerformanceReport.gs` | `performance:vN:` | RETIRED (Performance Report deleted; Insights is the replacement) |
 | `CompareRangesReport.gs` | `compareRanges:vN:` | RETIRED (Compare Ranges deleted; Insights custom-prior + vs-Prior chart replace it) |
@@ -575,14 +575,14 @@ complete set of prefixes.
 | `CompanyOverview.gs` | `companyOverview:vN` | `v32` |
 | `QCDReport.gs` | `qcd:vN:` | RETIRED (QCD modal deleted; `qcdAll:` remains) |
 | `InboundReport.gs` | `inbound:vN:` | `v17` |
-| `InsightsReport.gs` | `insights:vN:` | `v30` |
+| `InsightsReport.gs` | `insights:vN:` | `v31` |
 | `QCDReport.gs` (all-departments daily report) | `qcdAll:vN:` | `v6` |
 | `InboundReport.gs` (weekday×hour abandon heatmap) | `inboundHeatmap:vN:` | `v5` |
 | `DirectCallReport.gs` | `directCall:vN:` | `v7` |
 | `OutboundReport.gs` | `outboundReport:vN:` | `v12` |
 | `OutboundReport.gs` (CE-3 direct lines) | `outboundDirect:vN:` | `v6` |
 | `CompanyOverview.gs` (YTD trend chart series) | `overviewChartYtd:vN:` | `v5` |
-| `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v1` |
+| `AgentHome.gs` (agent app, window KPIs) | `agentHome:vN:` | `v2` |
 | `AgentHome.gs` (agent app, 12-month history) | `agentHist:vN:` | `v1` |
 | `Data.gs` (derived dept queue-ext set, R45) | `deptExts:vN:` | `v1` |
 | `NeonRead.gs` (derived agent/ext pairs) | `neonAgentExts:vN:` | `v1` |

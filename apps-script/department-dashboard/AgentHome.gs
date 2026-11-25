@@ -35,7 +35,7 @@
  * ships the bare timestamp, never a guessed number.
  */
 
-var AGENT_HOME_CACHE_PREFIX_ = 'agentHome:v1';
+var AGENT_HOME_CACHE_PREFIX_ = 'agentHome:v2';   // v2: VS-1 the selected window decides the queue-split verdict
 var AGENT_TREND_DAYS_ = 30;
 
 /** Resolve who this request is about. Agents: self, always. Admins: preview. */
@@ -297,7 +297,9 @@ function getAgentHome(req) {
     // per-queue `mt`) so the agent's own trend + missed list agree with
     // their computeSummary_-derived KPIs. Off = rows untouched.
     if (typeof applyQueueSplitToRows_ === 'function') {
-      applyQueueSplitToRows_(dalRows, who.dept, { narrowSlots: true });
+      // VS-1 (broad-scan 2026-11-24, scan F2): the selected window decides the B-1
+      // verdict, not the trend span the same fetch carries (NUM-4's rule).
+      applyQueueSplitToRows_(dalRows, who.dept, { narrowSlots: true, verdictFromIso: from });
     }
     detail = agentHomeOwnDetail_(dalRows, who.agentName, from, to, trendFrom);
     var exMeta = excInfo ? exceptionDaysMeta_(excInfo, from, to) : [];

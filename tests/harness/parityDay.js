@@ -39,6 +39,7 @@ function rawRow(o) {
   r[6]  = o.talk || '';
   r[7]  = o.callTime || '';
   r[8]  = o.caller || '';
+  r[9]  = o.callerName || '';   // TT-1: the S2C-1 talk leg names the agent here
   r[10] = o.callee || '';
   r[11] = o.calleeName || '';
   r[14] = o.parentCall || '';

@@ -232,8 +232,15 @@ function getDQEDrilldownRows(params) {
     var pcall      = timeToSecLocal(timeVals[p] ? timeVals[p][1] : '');
     var pabn       = String(data[p][24]).trim() === 'Abandoned';
     var pCalleeNm  = canonicalize_(String(data[p][11]).trim());   // F24: match canonical roster form
+    // TT-1: the build's S2C-1 fallback reads the CALLER side of an
+    // external-callee leg -- keep the same three facts here.
+    var pCallerNm  = canonicalize_(String(data[p][9]).trim());
+    var pCalleeExt = String(data[p][10]).replace(/\D/g, '').length >= 10;
+    var pCallerExt = String(data[p][8]).replace(/\D/g, '').length >= 10;
     if (!parentMap[pcid]) parentMap[pcid] = { legs: [], abandoned: false };
-    parentMap[pcid].legs.push({ legId: plid, talkSec: ptalk, callSec: pcall, calleeName: pCalleeNm, abandoned: pabn });
+    parentMap[pcid].legs.push({ legId: plid, talkSec: ptalk, callSec: pcall, calleeName: pCalleeNm,
+                                callerName: pCallerNm, calleeExternal: pCalleeExt, callerExternal: pCallerExt,
+                                abandoned: pabn });
     if (pabn) parentMap[pcid].abandoned = true;
   }
   for (var pk in parentMap) {
@@ -266,6 +273,16 @@ function getDQEDrilldownRows(params) {
       var leg = parent.legs[i];
       if (leg.calleeName === agent && leg.talkSec > maxTalk) {
         maxTalk = leg.talkSec;
+      }
+    }
+    if (maxTalk > 0) return maxTalk;
+    // TT-1: the build's FALLBACK (buildDQEHistoricalData.js) -- the agent's own
+    // Outgoing leg to an external number, only where the callee rule found no
+    // talk. Parity-pinned by dqe-drilldown-parity.test.js.
+    for (var j = 0; j < parent.legs.length; j++) {
+      var fl = parent.legs[j];
+      if (fl.calleeExternal && !fl.callerExternal && fl.callerName === agent && fl.talkSec > maxTalk) {
+        maxTalk = fl.talkSec;
       }
     }
     return maxTalk;

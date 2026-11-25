@@ -611,7 +611,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   **Scope (owner ruling, R18): the exclusion applies to PER-AGENT AVERAGES
   AND BENCHMARKS only -- manager volume stays in dept TOTALS and RATES.**
   Consumers are the IR team-average, the My Department team "ans/day"
-  (`summary:v27`, answered per agent per day), the Team Outbound per-day
+  (`summary:v28`, answered per agent per day), the Team Outbound per-day
   figure (`deptOutbound:v1`, Batch D), and, since R18, Insights via
   `meta.teamAvgBasis` (the gap-vs-team baseline, the call-share equal-share
   benchmark, the behind-team classification); Insights' `teamStats`,
@@ -1728,7 +1728,7 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   still honors it** -- it drives the CSV's Department column and the combined
   default -- so don't "restore" it or hardcode that default in a second
   place. `subScope` is a cache-key
-  dimension (`summary:v27`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
+  dimension (`summary:v28`); `cdr.dept.subscope` is swept on boot (`sweepOrphanPrefs_`).
   **Combined means grouped, never merged:**
   rows carry `dept`, each dept gets a `subq-group-head` subheader and its OWN
   subtotal row from `deptGroups`, and the grand total is labelled -- so the
@@ -1797,9 +1797,9 @@ A few things that have bitten us repeatedly. See `docs/known-issues.md` for full
   mapped queues match NONE of the splits' RAW queue names, which is a CONFIGURATION fault (the
   canonical-vs-raw name bridge is the admin-populated "Inbound queue
   aliases" column, and nothing verifies it is complete -- fix-history B-1
-  has the mechanism; a reader building ONE surface from two windows names
-  the verdict's span, `verdictFromIso` -- the Overview tile, NUM-4,
-  `manager-numbers.test.js`). A PARTIAL mismatch keeps its narrowing and reports
+  has the mechanism; a reader whose fetch spans more than it shows names
+  the verdict's span, `verdictFromIso` -- the Overview tile (NUM-4), My
+  Department, IR, Insights, the agent app (VS-1), `manager-numbers.test.js`). A PARTIAL mismatch keeps its narrowing and reports
   the dropped queue (`meta.queueSplitUnmatched`); each row carries
   `queueScoped`. `avgAbdWait`/`csrAvgAbdWait` are NOT narrowed (the
   pipeline stamps one per-DAY value on every row), nor are the AD-derived

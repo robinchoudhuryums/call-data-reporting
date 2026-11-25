@@ -2939,6 +2939,16 @@ function previewCallLegShapes(dateIso) {
     + out.answer.onlyExternalCallee + ' only an answer leg whose CALLEE is an external number ('
     + out.answer.onlyExternalCalleeCallerExt + ' of them with an extension in CALLER); '
     + out.answer.other + ' neither.');
+  // TT-1: does the DQE talk-time fallback reach those calls?
+  say('    DQE talk (TT-1): ' + out.answer.onlyExternalCalleeTopLevelNamed + ' of the '
+    + out.answer.onlyExternalCallee + ' carry that leg at the TOP level with a caller name -- the shape the DQE '
+    + 'build now credits talk for. ' + (out.answer.onlyExternalCallee
+      ? (out.answer.onlyExternalCalleeTopLevelNamed === out.answer.onlyExternalCallee
+        ? 'VERDICT: all reached -- re-import the dates you report on (Operator State #56).'
+        : (out.answer.onlyExternalCalleeTopLevelNamed
+          ? 'VERDICT: partly reached -- the rest keep no talk; report the counts.'
+          : 'VERDICT: none reached -- the fix changes nothing on this date; report this.'))
+      : 'VERDICT: no such calls on this date.'));
   say('    answer-leg shapes (direction | callee | caller: legs): '
     + Object.keys(out.answer.shapes).sort().map(function (k) { return k + ': ' + out.answer.shapes[k]; }).join('; '));
   out.lines = lines;
@@ -3018,7 +3028,8 @@ function callLegShapeTally_(legs, maps) {
   });
 
   // (B) answered EXTERNAL inbound calls (the records the matchers index).
-  var answer = { calls: 0, calleeExtAnswer: 0, onlyExternalCallee: 0, onlyExternalCalleeCallerExt: 0, other: 0, shapes: {} };
+  var answer = { calls: 0, calleeExtAnswer: 0, onlyExternalCallee: 0, onlyExternalCalleeCallerExt: 0,
+                 onlyExternalCalleeTopLevelNamed: 0, other: 0, shapes: {} };
   var records = buildInboundCallRecords_(legs);
   records.forEach(function (rec) {
     if (rec.isInternal || rec.disposition !== 'answered') return;
@@ -3027,18 +3038,27 @@ function callLegShapeTally_(legs, maps) {
       return str(l[IC_COL.ANSWERED]) === 'Answered' && icTimeToSec_(l[IC_COL.TALK]) > 0;
     });
     answer.calls++;
-    var hasExtCallee = false, externalCallee = [];
+    var hasExtCallee = false, externalCallee = [], topNamed = false;
     ans.forEach(function (l) {
       var ck = kind(l[IC_COL.CALLEE]), rk = kind(l[IC_COL.CALLER]);
       var key = str(l[IC_COL.DIRECTION]) + ' | ' + ck + ' | ' + rk;
       answer.shapes[key] = (answer.shapes[key] || 0) + 1;
       if (ck === 'ext') hasExtCallee = true;
-      else if (ck === 'external') externalCallee.push(rk);
+      else if (ck === 'external') {
+        externalCallee.push(rk);
+        // TT-1 (broad-scan 2026-11-24): the DQE build reads only TOP-LEVEL legs
+        // (no parent call id) and matches the agent by NAME, so its S2C-1
+        // fallback reaches this call only when the leg is top-level and names
+        // a caller. Counted, never printed.
+        var par = str(l[IC_COL.PARENT_CALL_ID]);
+        if (rk === 'ext' && (!par || par.toUpperCase() === 'N/A') && str(l[IC_COL.CALLER_NAME])) topNamed = true;
+      }
     });
     if (hasExtCallee) answer.calleeExtAnswer++;
     else if (externalCallee.length) {
       answer.onlyExternalCallee++;
       if (externalCallee.indexOf('ext') !== -1) answer.onlyExternalCalleeCallerExt++;
+      if (topNamed) answer.onlyExternalCalleeTopLevelNamed++;
     } else answer.other++;
   });
   return { direct: direct, answer: answer };

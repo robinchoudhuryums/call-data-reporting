@@ -22,6 +22,10 @@
 //   NUM-9  an outbound-only agent day does not say "no per-call rows".
 //   NUM-10 the Direct tab orders before it caps, and its summary reads past
 //          the list's cap.
+//   VS-1 (broad scan 2026-11-24, scan F2): every multi-window DQE reader takes the
+//          queue-split verdict on the window it SHOWS (NUM-4's rule), so a
+//          renamed queue's old name in the prior / trend window cannot narrow
+//          the shown window to zero while the Missed section falls open.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -322,6 +326,42 @@ test('NUM-4: verdictFromIso -- the named span decides; with no evidence in it, e
   const ok = h.call('queueSplitNarrowedCopy_', mk(), 'Svc', { verdictFromIso: '2026-08-23' });
   assert.equal(ok.info.fellOpenUnmatched, false);
   assert.deepEqual(ok.rows.map(function (r) { return r.totalRung; }), [0, 5]);
+});
+
+// ── F2: the shown window decides the verdict on every multi-window reader ───
+test('VS-1: My Department takes the queue-split verdict on its own window, not the prior window it also fetches', function () {
+  const h = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'CompanyOverview.gs', 'QCDReport.gs', 'DeptConfig.gs',
+                             'Data.gs', 'NeonRead.gs', 'ExceptionDays.gs'], capture: ['SHEETS'] });
+  h.state.props = { SPREADSHEET_ID: 'fake', ADMIN_EMAILS: 'admin@x.com', QUEUE_SPLIT_SCOPE: 'dept' };
+  h.state.userEmail = 'admin@x.com';
+  h.state.spreadsheet = makeFakeSpreadsheet({ sheets: {
+    'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 103'] }),
+    'DQE Historical Data': dqeSheet([dqeRow({ date: '2026-09-21', agent: 'Anna', ext: '103', rung: 5 })]),
+  } });
+  // The dept claims only the OLD raw name; the shown day carries only the NEW one.
+  h.ctx.inboundQueuesForDept_ = function () { return ['A_Q_Old']; };
+  const row = function (date, q) {
+    return { dateIso: date, agent: 'Anna', monthYear: '', queueExt: '103', totalUnique: 5, totalRung: 5, totalMissed: 1,
+      totalAnswered: 4, tttSec: 40, attSec: 10, avgAbdWaitSec: 0, csrAvgAbdWaitSec: 0,
+      queueSplit: JSON.stringify({ [q]: { u: 5, r: 5, m: 1, a: 4, t: 40, n: 4, mt: '' } }) };
+  };
+  // 2026-09-18 is in the E5 prior window of a one-day 09-21 view; it still carries the old name.
+  h.ctx.sheetFetchDqeRows_ = function () { return [row('2026-09-18', 'A_Q_Old'), row('2026-09-21', 'A_Q_New')]; };
+  const withPrior = plain(h.call('computeSummary_', 'CSR', '2026-09-21', '2026-09-21', 'roster', {}));
+  h.ctx.sheetFetchDqeRows_ = function () { return [row('2026-09-21', 'A_Q_New')]; };
+  const alone = plain(h.call('computeSummary_', 'CSR', '2026-09-21', '2026-09-21', 'roster', {}));
+  assert.equal(alone.totals.totalRung, 5, 'with no prior evidence the window falls open to its all-queue figures');
+  assert.equal(withPrior.totals.totalRung, alone.totals.totalRung,
+    'a prior-window row on the old name must not narrow the shown window to zero');
+});
+
+test('VS-1: Insights, the Individual Report and the agent app pass the shown window to the verdict', function () {
+  const src = function (f) { return fs.readFileSync(path.join(DASH, f), 'utf8'); };
+  [['Data.gs', /applyQueueSplitToRows_\(srcRows, dept, \{ assessAgents: roster\.names, verdictFromIso: from \}\)/],
+   ['InsightsReport.gs', /applyQueueSplitToRows_\(srcRows, dept, \{ assessAgents: roster\.names, verdictFromIso: from \}\)/],
+   ['IndividualReport.gs', /applyQueueSplitToRows_\(srcRows, dept, \{ assessAgents: roster\.names, verdictFromIso: from \}\)/],
+   ['AgentHome.gs', /applyQueueSplitToRows_\(dalRows, who\.dept, \{ narrowSlots: true, verdictFromIso: from \}\)/],
+  ].forEach(function (pair) { assert.match(src(pair[0]), pair[1], pair[0] + ' must name the shown window (VS-1)'); });
 });
 
 // ── NUM-5: Transfer retries ─────────────────────────────────────────────────

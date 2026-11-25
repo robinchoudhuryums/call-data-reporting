@@ -631,6 +631,14 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     const legId       = parseInt(row[DQE_C.LEG_ID]) || 0;
     const abandoned   = String(row[DQE_C.ABANDONED]).trim() === 'Abandoned';
     const calleeName  = canonicalizeAgentName(String(row[DQE_C.CALLEE_NAME]).trim());
+    // TT-1 (broad-scan 2026-11-24): the S2C-1 shape -- on some answered queue
+    // calls the agent's only talk leg is their OWN Outgoing leg: CALLEE is the
+    // customer's number, the agent is on the CALLER side. Kept so the talk
+    // lookup below can fall back to it (the inbound capture's icAnswerLegAgent_
+    // rule). An external number is >= 10 digits.
+    const callerName  = canonicalizeAgentName(String(row[DQE_C.CALLER_NAME]).trim());
+    const calleeExternal = String(row[DQE_C.CALLEE]).replace(/\D/g, '').length >= 10;
+    const callerExternal = String(row[DQE_C.CALLER]).replace(/\D/g, '').length >= 10;
 
     const talkSec = timeToSec(timeVals[i] ? timeVals[i][0] : '');
     const callSec = timeToSec(timeVals[i] ? timeVals[i][1] : '');
@@ -645,7 +653,8 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
     // just whether ANY leg of the parent was. See finalization
     // below for how this drives waitSec. Also store startPST so we
     // can timestamp queue-only abandoned events (no agent rang).
-    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName, abandoned, startPST });
+    parentMap[callId].legs.push({ legId, talkSec, callSec, calleeName, callerName,
+                                  calleeExternal, callerExternal, abandoned, startPST });
     if (abandoned) parentMap[callId].abandoned = true;
   }
 
@@ -855,6 +864,19 @@ function buildDQEHistoricalData(rawSheet, dqeSheet, opts) {
       let maxTalk = 0;
       for (const leg of parent.legs) {
         if (leg.calleeName === agent && leg.talkSec > maxTalk) {
+          maxTalk = leg.talkSec;
+        }
+      }
+      if (maxTalk > 0) return maxTalk;
+      // TT-1: FALLBACK ONLY -- reached only where the callee rule found no
+      // talk, so no figure that was non-zero before can move. The S2C-1 shape:
+      // the agent's own Outgoing leg (an internal CALLER named as the agent,
+      // an external CALLEE) carries the conversation. Mirrored in
+      // cdr-report/DQEdrilldown.js; pinned by pipeline-build.test.js and
+      // dqe-drilldown-parity.test.js.
+      for (const leg of parent.legs) {
+        if (leg.calleeExternal && !leg.callerExternal && leg.callerName === agent
+            && leg.talkSec > maxTalk) {
           maxTalk = leg.talkSec;
         }
       }

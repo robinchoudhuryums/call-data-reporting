@@ -1475,6 +1475,33 @@ test('callLegShapeTally_: counts direct forks per agent and the answer-leg shape
   assert.ok(!/2145550|J Doe|8[1-4]000[12]/.test(flat), 'counts only: no number, name or call id');
 });
 
+// TT-1 (broad-scan 2026-11-24): the DQE build credits the S2C-1 talk leg only
+// when it sits at the TOP level (no parent call id) and names a caller; the
+// probe says how many of the outgoing-only answers have that shape.
+test('TT-1: callLegShapeTally_ counts the outgoing-only answers the DQE fallback can reach', function () {
+  const maps = { extToAgent: { '102': { name: 'Bob', dept: 'CSR' } }, queueExtSet: new Set(['103']) };
+  const call = function (root, childLeg) {
+    return [
+      leg({ callId: root, legId: 1, start: '06/04/2026 11:00:00', direction: 'Incoming', caller: '12145550002', callee: '103', calleeName: 'A_Q_CSR', answered: 'Answered' }),
+      leg(Object.assign({ callId: root + 'b', legId: 1, start: '06/04/2026 11:00:10', connected: '06/04/2026 11:00:12', stop: '06/04/2026 11:03:00',
+        direction: 'Outgoing', caller: '102', callee: '12145550002', calleeName: 'J Doe', answered: 'Answered', talk: '0:02:48', dept: 'CSR' }, childLeg)),
+    ];
+  };
+  // A child leg (parent id set): out of the DQE build's reach.
+  const child = h.call('callLegShapeTally_', call('820001', { parent: '820001', callerName: 'Bob' }), maps);
+  assert.equal(child.answer.onlyExternalCallee, 1);
+  assert.equal(child.answer.onlyExternalCalleeTopLevelNamed, 0, 'a child leg is not reached');
+  // The same leg with no caller name: not reached either.
+  const unnamed = h.call('callLegShapeTally_', call('820001', { parent: '820001' }), maps);
+  assert.equal(unnamed.answer.onlyExternalCalleeTopLevelNamed, 0);
+  assert.ok(!/J Doe|Bob|2145550/.test(JSON.stringify(child)), 'counts only');
+  // A leg of the ROOT call itself (same call id, no parent) naming its caller:
+  // exactly the rows the DQE build's parent map holds -- reached.
+  const top = h.call('callLegShapeTally_', call('820001', { callId: '820001', legId: 2, callerName: 'Bob' }), maps);
+  assert.equal(top.answer.onlyExternalCallee, 1);
+  assert.equal(top.answer.onlyExternalCalleeTopLevelNamed, 1, 'a top-level named leg is reached');
+});
+
 // ---- S2C-1 agentBusy half (owner's leg-shape probe, 2026-09-28) --------------
 // 22 of 583 answered calls carried the answering agent ONLY on their own
 // Outgoing talk leg: CALLEE = the customer's number (its CALLEE_NAME is the

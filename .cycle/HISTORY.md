@@ -1,0 +1,6305 @@
+# Cycle History
+
+Entries rolled out of `.cycle/STATE.md` at each new cycle's first implement CHECKPOINT. Newest cycle first.
+
+## Cycle 260 and earlier (rolled 2026-11-25, at Cycle 261's first checkpoint)
+
+Everything below is STATE.md's "OPEN NOW" and earlier session sections exactly as they stood at the end of Cycle 260 (the file used "OPEN NOW" + "Latest / Prior session", not the template's "In progress" / "Completed this cycle"). The still-live owner items are carried in STATE.md under "Carried from Cycle 260".
+
+### OPEN NOW at the end of Cycle 260
+- **2026-11-24 (3) -- FO-260-3 DONE (owner: "shorten the Daily axis ticks to Oct 26").** The Queue health chart's Daily axis ticks print `isoDateShort_(label)`; the labels stay ISO dates (the point drill and QH2's marks read them); Monthly keeps its partial-month tick. One unit test, one rendered check in `qhPass`. The tooltip's title still shows the ISO date (not asked for). Removed from Open follow-on items; FO-260-1 and FO-260-2 remain (next audit). PR 421 (QH1-QH4) merged as 86322ed.
+  **Where I left off:** pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard; walk S32 (QH + FO-260-3 steps) and S61.
+- **2026-11-24 (2) -- OWNER PLAN "QH" IMPLEMENTED: QH1-QH4 (block `.cycle/blocks/260-qh-broad-implement.md`).** Client only, no server change, no cache version moves. (QH1) the queue chart is stacked ABOVE its table, both `flex: 1 1 100%`, canvas 240 px. (QH2) a violation date marks its day on the chart -- `insQhMark_` + the inline plugin `INS_QH_MARK_PLUGIN_` + PURE `insQhMarkPoints_`; chip = one day, the label (a tab stop) = all; ring + guide on Daily, the month's point with "N violation days" on Monthly, `.is-viol-mark` cells on the Calendar; a pin wins; the click is still the Daily breakdown jump. (QH3) PURE `insQhEmptyQueues_` / `insQhEmptyLabel_` fold zero-call queues behind one row (`is-empty-open` on the tbody); PURE `insQhChartQueues_` leaves a queue off the chart only when it has no calls anywhere in the span shown. (QH4) PURE `insQhAutoView_` (Daily at 45 days or less) until a view is clicked; `insQhViewPicked` saved as `qhViewPicked`; an old saved Monthly reads as no choice (`insQhPickedFromPrefs_`). 3,194 unit tests pass; lint clean; ci:ui 18 of 18 on the final code; 9 of 9 bites. NET +1 (QH1 was live in the owner's screenshot; QH2-QH4 are capabilities).
+  **Departures from the plan (say so if challenged):** one implementation commit, not four (the four batches share the same functions); the fold row NAMES the queues, so it folds even a single empty queue; the "Violation dates" label is a tab stop (keyboard parity) -- not in the plan; the Monthly mark reads month keys back from the axis labels, after a probe run outside the Chicago zone showed labels and team month keys one month apart.
+  **Not checked (cannot be, from here):** whether every listed violation date sits at or above the 4% line on LIVE data -- the harness fixture generates flags independently of the percentages. INV-50 says they agree from 2026-08. It is a step in S32.
+  **Where I left off:** pushed on claude/cool-wozniak-fly3au; PR opened and set to merge on green (owner asked). Owner-side: deploy the dashboard; walk S32 (QH steps) and S61; FO-260-3 is a decision for the owner.
+- **2026-11-24 -- OWNER PLAN "QH" (Queue health on My Department; approved 2026-11-24, all four defaults accepted). Four client-only batches; `/broad-implement QH1` .. `QH4`.** Owner's screenshot: with the two side panels, the Queue health table and its chart share ~1,000 px, so the chart is cramped AND the table scrolls sideways.
+  **QH1 -- stack.** The chart card moves ABOVE the table; both take the section's full width (always, also on very wide screens -- one layout). Chart height 260 -> ~240 px. Row hover -> line highlight and the column-heading metric buttons keep working. `dashboard.html` (card order), `styles.html` (the two `.ins-qh-cols >` flex rules). Two pins encode side-by-side and change: `brief-accordion.test.js` (chart after the table) and `client-dead-ends.test.js` (the two flex-basis floors).
+  **QH2 -- violation dates mark the chart.** Hover or keyboard focus on a `.ins-viol-date` chip marks that day: Daily = a ring on that queue's point + a vertical guide + the other queues dimmed; Calendar = the day cell outlined; Monthly = the month's point marked with a note of how many violation days it holds (the view never switches on hover). Hovering the "Violation dates" label marks all of that queue's days. Click keeps its jump to the Daily breakdown. A legend pin wins, as for row hover. **Check while building:** is every listed violation date at or above the 4% line on that queue's daily series? The mark comes from the date list, so it is right either way; a marked day below the line is reported as a data question.
+  **QH3 -- empty queues fold.** Queues with ZERO calls in the selected period collapse into one row ("N queues with no calls this period"); clicking shows them. A queue's line + legend entry leave the chart only when it has no calls anywhere in the span the chart shows (so a queue empty this month but live earlier keeps its Monthly line).
+  **QH4 -- default view follows the window.** With no view chosen: Daily when the window is 45 days or less (and daily data exists), else Monthly. A clicked view is remembered and wins. Every saved prefs blob already says `qhChartView: 'monthly'` whether or not it was picked, so a saved Monthly counts as "no choice made" (a new picked flag); a saved Daily / Calendar is kept.
+  **Across all four:** no server change (no cache version moves; dashboard deploy only); unit tests for each new pure rule; rendered checks in `drive-smoke.js`; docs = `docs/client-ui-conventions.md`, S32 + S61, fix-history. No CLAUDE.md growth planned (it is 0.6 KB under its warning line). Order: QH1 first; QH2-QH4 independent. Four commits, one PR.
+- **2026-11-23 (2) -- /sync-docs (seven checks; docs only).** No app code changed since the last run, so checks 1-4 found one thing: the library range in CLAUDE.md / README / fix-history. **Check 6 promoted 20 invariant candidates: the library is now INV-01..INV-75.** Four reflect blocks had each proposed INV-56 onward, so block 149 keeps INV-56..60, block 241-245 keeps INV-61..64, and blocks 161-166, 169-173, 207-211 are renumbered to INV-65..67, 68..71, 72..75 (docs/invariants.md carries a numbering note; each entry names its block and first number). Every rule was checked against the code and its Verify suite; four were reworded to match today (five JDBC builders, 24 export headers, the P11 number exception on INV-62, the retention floor now pinned at 25 months). **The next free invariant number is INV-76.** Check 7 (roadmap, `docs/next-steps.md`): the MD row is marked merged (PR #418), the title date updated, the "owner-confirmed NEXT" line put in the past tense (CB-1 shipped 2026-09-28), the Company-line follow-on names the avg-answer view. **No next priority is chosen** -- open items are 6c (Outbound release, gate still on), Batch 5 (timezone split, gated) and Phase 3 (deferred); the owner picks. Check 5: CLAUDE.md 181.9 -> 183.7 KB (20 index lines added, ~1.4 KB of narrative moved to a new `C2` row in fix-history); it sits 0.6 KB under the 90% warning line, so the next addition should come with a trim.
+  **Where I left off:** committed, pushed, PR opened and merged on green (owner asked). Nothing to deploy.
+- **2026-11-23 -- /sync-commands to claude-workflow-tools v1.56.0 (was v1.51.0).** 14 commands copied verbatim (audit, broad-implement, broad-scan, cycle-close, cycle-resume, cycle-status, health-synthesis, implement, plan, regression, seams-audit, targeted-audit, targeted-implement, verify; each was byte-identical to the v1.51.0 template). The local `sync-docs` gains the template's one new sentence in CHECK 7 (a roadmap item for each follow-on marked "roadmap").
+  **What the new text changes here:** (1) every audit SAVES ITS REPORT to `.cycle/blocks/` (`<cycle>-scan.md`, `<cycle>-audit-<subsystem>.md`, `<cycle>-targeted-audit-<subsystem>.md`) and the implement / plan commands read it back; (2) follow-on items get an ID `FO-<cycle>-<n>` and exactly one disposition (this cycle / next audit / roadmap / decision / won't do), recorded under an "Open follow-on items" section here -- THIS FILE HAS NO SUCH SECTION YET (follow-ons are prose inside the entries below); the first session that reports one creates it, and the older prose follow-ons carry no IDs until someone converts them; (3) the audits re-check "next audit" follow-ons (FOLLOW-ON REVIEW); (4) `/verify` and `/health-synthesis` stop and ask when the cycle has no reflect block; the verification block is named `<cycle>-verification.md`.
+  **Owner decision 2026-11-23: audit reports stay OUT of git.** The repository is public and a report is written in full, unfixed security findings included, so `.gitignore` excludes `*-scan.md`, `*-scan-N.md` and `*-audit-*.md` under `.cycle/blocks/` (implement blocks are re-included). Consequence: a report lives only in the session that wrote it -- a later session's `/broad-implement Batch N` will not find the file and must be given the report, as before.
+  **Where I left off:** committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). No app file changed -- nothing to deploy.
+- **2026-11-20 (7) -- /sync-commands to claude-workflow-tools v1.51.0 (was v1.43.0).** 19 commands copied verbatim from the template (all 19 were byte-identical to the v1.43.0 template, so nothing local was lost) and 4 added: `/verify`, `/seams-audit`, `/health-synthesis`, `/cycle-close`. Every command file now opens with a frontmatter description. `sync-docs` stays the LOCAL version (owner's choice) with the template's frontmatter and two checks merged in: CHECK 6 invariant candidates, CHECK 7 roadmap currency (`docs/next-steps.md`); it now runs seven checks.
+  **What the new text changes here:** `Phase` is a closed lifecycle (`audit` / `implement` / `reflect` / `idle`); CYCLE OPEN leaves the number alone only for a `Phase: audit` updated within 7 days; the first implement CHECKPOINT of a new cycle rolls the old cycle's entries into `.cycle/HISTORY.md` (this file uses "OPEN NOW", not the template's "In progress" / "Completed this cycle", so that first roll needs judgment); a summary block is never overwritten (a second batch under one scope takes `-2-` before the command name).
+  **Open, not done by the sync:** invariant candidates INV-56 onward sit unpromoted in the 207-211 and 241-245 reflect blocks (the library ends at INV-55) -- the next `/sync-docs` proposes them; no `PROJECT_HEALTH.md` (`/health-synthesis` reads it; `/cycle-init` creates it); no Axis B categories or Seams cadence configured (both optional; defaults apply); the template's helper scripts (`verification-pack.mjs`, `invariant-check.mjs`) are not copied -- the commands fall back to stated rules without them.
+  **Where I left off:** committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). No app file changed -- nothing to deploy.
+- **2026-11-20 (6) -- MD4-S + a docs sync.** MD4-S (owner: "address the Insights payload size improvement"): every Insights cache write logs `[insights-cache] <dept> <window>: N bytes` (`insCacheSizeLine_`); at 90 KB the per-agent daily series is shed before caching, on the returned object too, with `meta.agentDailyDropped` (`insFitForCache_`); a failed write says the window is uncached. Three tests in insights-report. Docs sync: two stale in-app Help sentences (the Insights topic still described Gap / Trend bases; the queue topic still pointed at the trend chart's "by queue" tab), five passages that still described the deleted basis switch, CLAUDE.md's "logs the size on every put" (the Overview only logs past 80 KB), Operator State #4 (where the size lines are), a next-steps row for the MD plan, the harness README. Unit 3,188 pass.
+  **Not fixed (code comment, out of a docs sync):** CompanyOverview.gs still says "Logging the size on every put" above code that logs only past 80 KB.
+  **Where I left off:** everything pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side list unchanged (deploy; S61 / S25 / S14 / S37 / S32; the size log lines).
+- **2026-11-20 (5) -- MD4 IMPLEMENTED, with MD3's three follow-ons the owner added to it (block `.cycle/blocks/260-md4-broad-implement.md`). THE OWNER'S "MD" PLAN IS COMPLETE.** (1) Queue health has its own trend chart (`insRenderQhChart_` / `insDrawQhChart_` on `#ins-qh-chart`, beside the table): row hover / focus highlights the queue's line (`insQhHighlight_`), three column-heading buttons pick the metric, Monthly / Daily / Calendar (`insQhResolveView_`; the calendar renderer now takes `{ queue: true }` and `INS_CAL_STATE_` holds a month per calendar). The Trend dropdown lost its five "Queue:" entries; an old pref self-heals once (`insQhHealFromPrefs_`). (2) F-a: VERIFIED that an agent card's IR link did nothing inside a brief row (handler on `#insights-page`, brief outside it) -- now on the document. (3) F-b: `agentData[].trendDays` (compact tuples, capped at 45 days of data, `insAgentDaySeries_`), `insights:v30`; By agent has Daily through the shared Monthly / Daily switch (`insTrendViewSync_`). (4) F-c: `#ins-cards-chart-mode`, `insCardsChartMode`, `insRenderCardsChartAbs_` and the A/B Basis row deleted. Unit 3,185 pass; lint clean; ci:ui 18 of 18 on the final code; seven pins bite-checked.
+  **Decisions made without the owner (say so if challenged):** the queue Calendar moved with the chart (it would otherwise have been lost); the by-agent day series is capped at 45 days of data (cache-value size); By agent has no Calendar; the queue chart has its own data-labels box.
+  **Not measured:** the Insights payload size with `trendDays` (estimate 8-17 KB added; watch for "InsightsReport cache put failed" after deploy).
+  **Where I left off:** MD1-MD4 + the plan commits pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy; walk S61 (MD1, MD3, MD4), S25 (MD2), S14 / S37 (MD3, MD4), S32 (MD4); read the size log lines (MD2, MD4). Earlier owner items still stand (P11-S1 "Took N s", S74, the partial-day read time, the team-tools change).
+- **2026-11-20 (4) -- MD3 IMPLEMENTED: one trend chart, "Team total / By agent" (block `.cycle/blocks/260-md3-broad-implement.md`).** Client only. `#ins-trend-wrap` is ONE element (home: the Trends fold) with `#ins-trend-scope`; `insRenderTrendChart_` hands off to `insRenderTrendByAgent_` on the same canvas (agent lines, monthly, Answered / Missed / % Answered, a dashed reference from PURE `insTrendAgentRef_`). `insRenderCardsChartTrend_` and the Agents fold's Trend basis are gone; the basis sub-toggle is hidden. Brief: the row a viewer opens takes the chart (`insTrendClaim_` from `insBriefToggle_`; Team = By agent above the gap bars, Trend = Team total; `.ins-trend-away` notes; PURE `insTrendRowTaker_`); no brief = chart at home. Draw gates ask `insTrendChartOpen_()`, never `insFoldOpen_('trend')`. Prefs `trendScope` (the switch's choice, `insTrendScopePref_` -- a row never saves) / `trendAgentMetric`; old Trend basis carries over (`insTrendPrefsFrom_`). A/B remote: Scope row. Unit 3,177 pass; lint clean; ci:ui green (see the block for the two runs); five pins bite-checked.
+  **Decisions made without the owner (say so if challenged):** (1) the count reference is the AVERAGE per agent shown, not the team total (the total would flatten every agent line); (2) with both rows open the chart sits in the row opened last and the other row offers it back, rather than one row closing the other; (3) By agent uses its own three-option metric select rather than the ten-option team one.
+  **Follow-ons (not done):** handlers bound on `#insights-page` do not see clicks inside `#ins-brief` (noticed, not verified; unreachable while the Cards view is hidden); By agent has no daily view (server work).
+  **Where I left off:** MD1 + MD2 + MD3 + the plan commit pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy, walk S61 (MD1 + MD3), S25's MD2 step, S14 / S37's MD3 steps, read the two size log lines (MD2). Next: MD4 (queue trend chart into Queue health; remove the five "Queue:" entries from the Trend dropdown; a saved `queues:*` pref self-heals).
+- **2026-11-20 (3) -- MD2 IMPLEMENTED: the Overview chart's "Avg answer time" view (block `.cycle/blocks/260-md2-broad-implement.md`).** Time to ANSWER an answered queue call, per dept per day, weighted by answered calls; null on a day with none. `computeQcdSnapshots_` adds `aaSum` / `aaN` per day (dept + company); `ovAvgAnswerSec_`; `trendChartAvgAnswerSec` (90-day blob) and `trendAvgAnswerSec` (YTD); the company series is admin-only by being on NEITHER non-admin allowlist (INV-39). `companyOverview:v32`, `overviewChartYtd:v5`. Client: `OV_CHART_METRICS_.avgAnswer`, the `secs` unit (m:ss axis, `ovFmtSecs_`, `ovSecsStep_`), tab, glossary line, chart tip. CH-4 golden regenerated (additive only). Unit 3,171 pass; lint clean; ci:ui all 18 runs passed; five pins bite-checked.
+  **Read differently from the plan (say so if challenged):** no arrows added (the Overview chart has none on any view); a parent's line uses its DIRECT queues only, which is what the abandoned views actually do.
+  **Size, ESTIMATED not measured:** 90-day blob ~46 KB; YTD payload ~73 KB now, ~81 KB at year end, against its 92,000-byte cache guard -- a sixth series or two more departments needs the YTD payload split first.
+  **Where I left off:** MD1 + MD2 + the plan commit pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy, walk S61 (MD1) and S25's MD2 step, read the two size log lines. Next: MD3 (one trend chart, Team total / By agent), then MD4.
+- **2026-11-20 (2) -- MD1 IMPLEMENTED: "slipping" removed (block `.cycle/blocks/260-md1-broad-implement.md`).** Client only. `insBriefAgents_`: Team row amber when any judged agent is behind the team, green otherwise, no red tier, the trend is not read, names read "(behind)". `insSyncFoldHeads_`: "N behind the team · N on track". `insTrendPill_`: "Improving" or no pill. Help text follows. KEPT: the "Biggest regressors" sort, the server `trend` field, the card's `data-trend` attribute. Pins: `insights-brief.test.js` (three bite-checked) + a rendered check in both `drive-smoke.js` shards. Unit 3,166 pass; lint clean; ci:ui all 18 runs passed.
+  **Follow-ons (not done):** unused `.ins-trend-down` / `.ins-trend-flat` CSS; an agent on par but well down on the prior period now has no flag anywhere (owner's ruling -- the starting point for a refined label later).
+  **Where I left off:** MD1 + the plan commit pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy, walk S61. Next: MD2 (Overview "Avg answer time" view), then MD3, MD4.
+- **2026-11-20 -- OWNER PLAN "MD" (My Department + Overview), four batches, ALL BUILT (entries above). Decisions are final (owner 2026-11-20); the batch text below is what `/broad-implement MD1` .. `MD4` resolves to in a fresh session.** Suggested order MD1 -> MD2 -> MD3 -> MD4; MD1 and MD2 are independent of everything, MD4 must follow MD3. P11-S1 was merged in PR #417 (2026-11-18), so nothing is unmerged.
+  **MD1 -- remove "slipping" (client only, ~2 h).** Owner: the label reads as overly negative for an agent who is doing well but trending down short-term; remove it for now, maybe reintroduce refined. (a) `insBriefAgents_` (script-8-insights): the Team row is AMBER when any judged agent is behind the team (`standing === 'attention'`), GREEN otherwise -- NO red tier for now; an agent on par but trending down is not named or counted; the names lose "(slipping)" / "(behind, slipping)" and read "(behind)". (b) `insSyncFoldHeads_`: the Agents head becomes "N behind the team · N on track". (c) `insTrendPill_`: "▲ Improving" or NO pill (never "≈ Steady" for a drop); the pill's hover text loses the slipping wording. (d) the help text in dashboard.html (~line 1880) and any brief legend. KEEP the "Biggest regressors" sort option (owner: it only orders the list) and the server's `trend` field (the sort reads it). Not in the agent app, digests or emails -- nothing to change there. Update the brief's pure-rule pins, the rendered checks that read the Team row / fold head, docs/client-ui-conventions.md (the brief's colour rules) and S61.
+  **MD2 -- Overview chart: an "Avg answer time" view (server + client, ~half a day).** A fifth view beside % Answered / Answered calls / Abandoned calls / Abandoned %. Average time to ANSWER for answered queue calls (QCD `Avg Answer`), NOT talk time: label it "Avg answer time (queue)". Per department per day, weighted by answered calls (`avgAnswerSec * totalAnswered` / `totalAnswered`); a parent includes its sub-queues' queues as the abandoned views do; null on a day with no answered queue calls (a line break, never a zero). Server: `computeQcdSnapshots_`'s per-day tuple (`a.daily[iso]`, CompanyOverview.gs) holds only totalCalls + abandoned today -- add the weighted sum and the answered count; `ovDeptChartSeries_` gains the series; it must be in BOTH payloads (the 90-day one in `getCompanyOverview` and the YTD one in `getOverviewChartTrend`). **Owner: YES to an admin-only COMPANY line** (volume-weighted across departments), so it joins BOTH admin strips (`personalizeOverview_` and `ovStripChartTrend_`, INV-39). **No target line** (there is no answer-time standard). Client: a new entry in `OV_CHART_METRICS_` with a new seconds unit (m:ss axis + tooltip), lower-is-better arrows like Abandoned %, its tab button, chart help. Cache bumps `companyOverview:v31` -> v32 and `overviewChartYtd:v4` -> v5 (every doc mention, cache-version-sync); regenerate the CH-4 payload golden; check the Overview blob's size log. CHECK FIRST: that the avg-answer column reaches the Overview on BOTH QCD read sources (`readQcdGrid_`: sheet and Neon), and that exception days are already filtered there.
+  **MD3 -- one trend chart: "Team total / By agent" (client, ~a day).** Today two charts share the same 12-month axis (`trendData.labels`): the Agents fold's "Trend" basis (`insRenderCardsChartTrend_`, one line per agent; Answered / Missed / % Answered) and the Trends fold's team line (`insRenderTrendChart_`; ten metrics, Monthly/Daily, Line/Calendar). Merge them INTO the Trends fold behind a "Team total / By agent" switch: Team total = today's Trend chart; By agent = the agent lines with the team line kept as a reference, monthly only, limited to the three agent metrics (Monthly/Daily and Line/Calendar apply to Team total only). The Agents fold keeps ONLY the gap bars (its "Trend" basis button goes; the hidden Absolute basis stays inert as it is). Brief rows: the TEAM row opens the consolidated chart on By agent (plus the gap bars + team detail), the TREND row opens it on Team total -- this is how the owner's "Team should open on Trend by default" is met. Carry over: the saved prefs (`cardsChartMode: 'trend'` and the new scope), the share-link state, the admin A/B remote's buttons, the image / email export of the section, exempt (team-average-excluded) agents drawn as today. Rendered checks (the drivers that open the Agents and Trends folds), docs/client-ui-conventions.md, S14 / S37 / S61.
+  **MD4 -- Queue health gets its own trend chart, linked to its table (client, ~half a day; AFTER MD3).** Keep Queue health as its own row and section (its table is "each queue now vs the prior period"). Move the queue trend chart (the per-queue series behind the Trend dropdown's five "Queue:" entries -- Abandoned %, Total calls, Violations, Avg answer time, Longest wait) INTO the Queue health fold beside the table; hovering OR focusing a queue's row highlights that queue's line; clicking a column header (a real button) switches the chart to that metric; REMOVE the five "Queue:" entries from the main Trend dropdown (ten options -> five). A saved pref or share link naming a `queues:*` metric self-heals: open Queue health on that metric. Result: Trends = people, Queue health = queues. Keyboard parity and named charts per the accessibility contract. Rendered checks, docs, S32 / S66. **ADDED by the owner 2026-11-20 ("add those follow-on items to MD4" -- MD3's three follow-ons):** (F-a) the older click handlers bound on `#insights-page` (e.g. the agent card's "open Individual Report" link, the card click) do not see clicks inside `#ins-brief`, which sits outside that element -- VERIFY in the rendered page, then fix so a section works the same inside a brief row as at home. (F-b) By agent gets a DAILY view: the server ships a per-agent daily series for the selected window beside `trendDaily` (same agents as the cards, floaters and the exempt handled as on the monthly lines), the Monthly / Daily switch applies to By agent, the reference line follows; the Calendar stays Team total only (one grid cannot show many agents). This changes the Insights payload: bump its cache prefix and check the payload size. (F-c) remove the dead Agents-fold basis sub-toggle markup (`#ins-cards-chart-mode`) and the Absolute renderer (`insRenderCardsChartAbs_`) with their A/B remote buttons, prefs handling and doc mentions (CLAUDE.md's Performance Report bullet names the renderer).
+  **Where I left off:** plan recorded only; no code changed. Still waiting on the owner from before: deploy the dashboard (P11-S1 is merged, not live), re-run `probeCallbackNumberLookup()` for its "Took N s" line, S74, the partial-day "read in N s" figure, the team-tools partial-days change.
+- **2026-11-18 -- P6-P11 MERGED (PR #416, with the docs sync); two live results in; P11-S1 speed-up implemented.** (1) `probeTransferRetryAvailability()` read PARTIAL 86.8% (105 of 121): every match on the same second and naming the sender, a 30 s allowance adding nothing, and the five newest misses all on or before 2026-11-02 -- so the rule stands and the misses are old dates whose direct-call rows predate the crediting fixes. No change made. (2) `probeCallbackNumberLookup()` read GOOD, 51 of 51 found and confirmed, but took 6 min 23 s (~7.5 s a call). **P11-S1:** `cbwFindLegRows_` searches the two id columns with a text finder (scan fallback when it finds nothing or throws), `cbwLegsOfCall_` reads the legs as one block (`CBW_SPAN_MAX_ROWS_`), `cbwStoredHashes_` is one statement for any number of calls, the check shares hashes + per-day id columns and logs its seconds, and each click logs where its time went. No privacy rule moved. The fake sheet models `createTextFinder`. Gates: unit suite, lint, module map, ci:ui.
+  **Waiting on the owner:** deploy the dashboard, re-run `probeCallbackNumberLookup()` and report the "Took N s" line; walk S74; the "read in N s" figure for partial-day suggestions; the team-tools partial-days change (handed off).
+  **Where I left off:** P11-S1 merged in PR #417 (2026-11-18).
+- **2026-11-17 (2) -- P11 IMPLEMENTED: the callback worklist, the one page a caller's phone number can be shown on (block `.cycle/blocks/260-p11-broad-implement.md`).** New `CallbackWorklist.gs`: `getCallbackWorklist` (the last 14 days' not-called-back episodes via `getOutboundUncalled`, late-handled ones left out; never a number), `revealCallbackNumber` (outbound gate -> `cbwMayReveal_` -> validation -> 40/hour cap, fail closed -> membership re-derived -> lookup -> audit row BEFORE the reply), `setCallbackNumbersForManagers`, `probeCallbackNumberLookup`. The number comes from `Call_Legs_<date>` in the CDR Import workbook (`CDR_IMPORT_SS_ID`) and is returned only when its HMAC equals the call's stored `caller_hash`. New sheet `Callback Number Log` (fifteen managed sheets); new properties `CDR_IMPORT_SS_ID`, `CALLBACK_NUMBERS_MANAGERS`; Operator State #95, S74, INV-01 carve-out. Client in script-7-admin (`cbw*`), route `/admin/callbacks`. Gates: unit 3,162 / 0, lint, module map, ci:ui all stages (drive-admin 270 of 270), 13 of 13 bite-checks.
+  **DECISIONS made without the owner (say so if challenged):** (1) a shown number must be PROVEN against the stored hash, so a missing `HMAC_SECRET` / unreachable Neon shows nothing; (2) a 40-per-hour per-person cap; (3) callers called back late or who got through later are left off the worklist; (4) NO manager entry point was built -- managers have no callback surface until the outbound release (#63), so the server path is complete and tested but the menu item is admin-only.
+  **Waiting on the owner:** deploy; `setup()`; set `CDR_IMPORT_SS_ID`; the `probeCallbackNumberLookup()` verdict; S74. Also still open from before: the `probeTransferRetryAvailability()` log (P10) and the "read in N s" figure (P9).
+  **Where I left off:** the plan's P1-P11 are all built; P6-P11 + the follow-on rounds were merged in PR #416 (2026-11-17).
+- **2026-11-17 -- P11 UNBLOCKED: the owner said YES to phone numbers on a callback worklist and accepted the five proposed defaults** (admins first, managers own-department behind an off-by-default switch; one page only, never email / digest / export / Neon / cache; revealed per row on click; every reveal logged without the number; only not-yet-called-back callers while the raw tab exists). The plan entry for P11 below carries the full text. Next: `/broad-implement P11`.
+- **2026-11-16 (7) -- P10 IMPLEMENTED: Transfer retries says whether the person tried first was free or on a call (block `.cycle/blocks/260-p10-broad-implement.md`).** A person-transfer attempt is its own internal call, held in `direct_calls` as an inbound internal direct call with `missed_free` / `missed_busy` + `busy_with`; the journey event has no call id, so `trAvailMatch_` matches on date + person + time (inside the record's ring, give or take 3 s), never against a record naming another caller. `trAttachAvailability_` sets `cases[].first.avail` and the tally; `trFetchDirectFor_` is one extra metered read (the cases' own date + person pairs), failure-isolated by `trAvailAttacher_`; `trBuildFromRows_` takes `opts.attach`. Client: the "Free or on a call" column, "While free" / "While on a call" in the ranking, `#tr-avail-note`, all hidden unless something is known. `trRetriesOfJourney_` untouched (cdr-import parity stands). Gates: unit 3,151 / 0, lint, module map, ci:ui all stages (drive-admin 252 of 252), 8 of 8 bite-checks.
+  **DECISION made without the owner (say so if challenged):** the plan put the column AFTER a measured match rate. The rate needs production data, so both were built together: the column shows a state only on a confident match, the page prints the rate and each not-known reason, and `probeTransferRetryAvailability()` (dashboard editor, read-only) logs the verdict with samples.
+  **Still waiting on the owner:** the probe's log after deploy (decides whether the 3 s line / name rule stand, or whether the capture should store the internal call's id on the journey event -- the follow-on); the "read in N s" figure for partial-day suggestions.
+  **Where I left off:** P6-P10 + the follow-on rounds committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Remaining from the plan: P11 (callback worklist) -- needs the owner's privacy decision.
+- **2026-11-16 (6) -- Owner rulings implemented: Mark all shown, an agent's own vs-prior per credited day, and the two P8 leftovers (block `.cycle/blocks/260-p9-followon2-broad-implement.md`).** MA-1: `savePartialDays` (all-or-nothing batch) + the editor's "Mark all shown (N)", which asks first. VP-1: IR cards carry `priorDays` + `priorPerDay` (`individual:v14`), Insights cards `daysPrior` (`insights:v29`); `creditedPair_` / `creditedDeltaPct_` (script-1-core) drive the count badges, the per-day subline and `insPerDayMetrics_(metrics, meta, card)`; the department's own vs-prior is NOT re-based. P8-L1: the % Ans card marker reads `meta.teamAvgBasis.pct`. P8-L2: an exempt agent's card says "exempt", has no team markers, and gets no gap-chart bar (named under the chart). Gates: unit 3,144 / 0, lint, ci:ui 18 of 18, 8 of 8 bite-checks.
+  **Handed to the owner:** a handoff block for the CSR team-tools session (the `Partial Days` matching change). When it lands, update Operator State #68 (a sixth tab) and #94 ("planned, not built").
+  **Still waiting on the owner:** the "read in N s" figure for the largest department after deploy (decides whether the suggestion read needs narrowing).
+  **Where I left off:** P6-P9 + both follow-on rounds committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Next in sequence: P10 (Transfer retries availability -- a read-only match-rate check first). P11 needs the privacy decision.
+- **2026-11-16 (5) -- P9 follow-ons IMPLEMENTED (block `.cycle/blocks/260-p9-followon-broad-implement.md`).** Three of the P9 block's follow-on items: `getPartialDaySuggestions` returns and logs `readMs` and the status line ends "read in N s" (the read's production cost is unknown; narrowing waits for that number); "Nothing left to look at" vs "Nothing stands out"; one-line suggestion rows (weekday date, full date as the title and `data-pd-date`). Gates: unit 3,138 / 0, lint, ci:ui 18 of 18, 2 of 2 bite-checks.
+  **Looked at and declined:** a sheet fallback for the suggestions (inbound agent names live only in the heavy journey column; a cheaper read would mislead) -- recorded in Operator State #94. **Not narrowed blind:** the suggestion read (one option changes results, the other may be slower; no production timing yet).
+  **Waiting on the owner:** (a) one-click / mark-all for suggestions; (b) whether an agent's own vs-prior figures should be per credited day (changes every vs-prior figure in IR + Insights); (c) the "read in N s" figure for the largest department after deploy.
+  **Still open from P8 (not in the P9 list):** the % Ans marker on Insights cards uses the dept rate while the count bars use the manager-excluded team; an excluded manager still gets a team chip and a gap-chart bar.
+  **Where I left off:** P6-P9 + these follow-ons committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Next in sequence: P10 (Transfer retries availability -- a read-only match-rate check first). P11 needs the privacy decision.
+- **2026-11-16 (4) -- Follow-up plan, batch P9 IMPLEMENTED: partial-day suggestions (block `.cycle/blocks/260-p9-broad-implement.md`).** The Partial days editor's "Find likely partial days" calls `getPartialDaySuggestions({department})` (PartialDays.gs; admin-only, read-only): each roster agent's first and last call time per day over the last 90 days (`PARTIAL_SUGGEST_DAYS_`) from Neon -- inbound journey legs expanded in SQL, `outbound_calls`, `direct_calls`; one aggregated row per agent-day, names bound as a JSON parameter -- then the pure `partialDaySuggestionsFrom_` lists workdays well short of the agent's own MEDIAN day with the share the span implies (`pdSuggestedCredit_`). Not judged: under 5 workdays of calls or a usual day under 4 h. Never suggested: weekends, holidays, exception days (department-scoped too), a day with any row. Client: Use fills the form (never calls the server); Whole day calls `dismissPartialDaySuggestion`, which appends a Credit-1 "Reviewed: whole day" row -- NOT a mark (no figure, no cache key) -- listed apart, removable. Gates: unit 3,138 / 0, lint, ci:ui 18 of 18, 12 of 12 bite-checks.
+  **Decisions made:** dismissals live in the Partial Days sheet as Credit-1 rows (no new sheet, no Script Property); no one-click marking (the admin always chooses the reason); no sheet fallback for the read (needs Neon); `drive-deptoutbound`'s P4 reload check now seeds the stored fold for the reload (headless Chromium drops a just-written key on reload under load -- reproduced 2 of 5, see the block).
+  **NOT measured:** the span read against the production database (it expands every inbound journey for 90 days; 90 s statement limit, then "could not be read"). Owner should press Find once on the largest department after deploy and note the time.
+  **Where I left off:** P6-P9 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard; walk S73 (P7, P8 and P9 steps), S11, S14, S62 / S32's P6 steps; the earlier list still stands (the `Other` column, `rebuildDirectCallHeldDates()`, sign-off on the P4 card form). Next in sequence: P10 (Transfer retries availability -- starts with a read-only match-rate check, needs nothing from the owner). P11 needs the privacy decision.
+- **2026-11-16 (3) -- Follow-up plan, batch P8 IMPLEMENTED: partial days in the Individual Report and Insights (block `.cycle/blocks/260-p8-broad-implement.md`).** The owner typed "Batch 8"; the scan's own Batch 8 (CCX) was merged in PR #413, so it was read as the plan's P8. Every agent-vs-team VOLUME comparison in the two reports moved from window totals to per credited day: IR's three count tiles ("24.8 / day" over "Team 20.1 / day"; the big number stays the total) and its two volume sentences; Insights' team chip, the Answered / Missed card bars, the Gap vs team chart for a count metric, and the call-share benchmark (each agent's share of the days worked, no longer a flat equal share). Server: `Util.gs::agentDaysBlock_`; IR cards `days` + `perDay`, `teamAvg.perDay` (`individual:v13`); Insights cards `days`, `meta.teamAvgBasis.agentDays` (`insights:v28`). Client helpers `perDayOf_` / `attDaysText_` / `perDayText_` (script-1-core). Rates, counts, shares of the department and every vs-prior figure are untouched. Gates: unit 3,119 / 0, lint, ci:ui 18 of 18, 11 of 11 bite-checks.
+  **Decisions made:** the Insights card bars and chip now use the manager-excluded baseline (the basis the agent-days are counted on); the % Ans bar marker still reads the department rate (follow-on); IR "Copy data" gained an "Agent / day" column; a surface with no `days` in its payload keeps the window comparison.
+  **Known and reported:** a stray call on a day off counts as a whole day worked in these comparisons unless the day is marked (P9's suggestions would catch it); the same agent's vs-prior figures are not credited.
+  **Where I left off:** P6 + P7 + P8 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard; walk S73 (incl. its two P8 steps), S11, S14, and S62 / S32's P6 steps; the earlier list still stands (the `Other` column, `rebuildDirectCallHeldDates()`, sign-off on the P4 card form). Next in sequence: P9 (partial-day suggestions). P10's read-only match-rate check needs nothing; P11 needs the privacy decision.
+- **2026-11-16 (2) -- Follow-up plan, batch P7 IMPLEMENTED: partial days, core (block `.cycle/blocks/260-p7-broad-implement.md`).** Owner confirmed rule A ("pace while present") and picks 1-7 on 2026-11-16: a marked day counts as its credit (0 / 0.25 / 0.5 / 0.75) in the DIVISOR of ans/day and outbound / day only; counts, totals and rates never change; admin-only marking; a fixed reason list that never leaves the editor; managers see the attendance line and dates, agents their own line; teammates credited in the team per-agent-day pair; a dash below one credited day. New: the `Partial Days` sheet (fourteen managed sheets), `PartialDays.gs` (the editor, Admin ▾ → Partial days), `Util.gs` `getPartialDays_` / `creditedDays_` / `perCreditedDay_` / `partialDaysTag_` (folded into `reportFreshnessTag_`; no cache version bump), row fields `daysCredited` / `partialDays` / `partialMarks` and `obDaysCredited` / `obPartialDays`. Docs: Operator State #94, INV-01, INV-12, S73. Gates: unit 3,102 / 0, lint, ci:ui 18 of 18, 11 of 11 bite-checks.
+  **Decisions made:** no last-good copy for a failed sheet read (it reads as no marks for that run); calls on a credit-0 day stay in the count (calls are never removed); the cache tag hashes date / agent / credit, not the reason.
+  **NOT done, by scope:** P8 (the Individual Report and Insights comparisons do not apply marks), P9 (suggestions). The CSR team app's matching change is WRITTEN in Operator State #94 and not built -- it is a separate repo.
+  **Where I left off:** P6 + P7 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard; walk S73 (and S62 / S32's P6 steps); the earlier list still stands (the `Other` column, `rebuildDirectCallHeldDates()`, sign-off on the P4 card form). Next in sequence: P8. P10's read-only match-rate check needs nothing; P11 needs the privacy decision.
+- **2026-11-16 -- Follow-up plan, batch P6 IMPLEMENTED, plus the Queue Call Data loading frost (block `.cycle/blocks/260-p6-broad-implement.md`).** PR #415 (P1-P5 + follow-ons) MERGED 2026-11-13 (4fd1621); the branch was restarted from main. P6: `qcd.range` / `rangePrior` carry `longestWait(Sec)` (QCD col I, a MAX over the dept's own queues and days) and the per-day tuples a 6th element; `computeQcdReport_` accumulates avg answer + longest wait per queue per day / month and ships the daily values as compact `dailyAnswerTimes` arrays; `queueHealth.trend.metrics.avgAnswer` / `.longestWait` (seconds, null = none). Client: the Longest wait card (`qmax`, a week / month bar is its longest day), the strip grid by card count (`data-cards`), two Insights trend metrics on an m:ss axis (`INS_QUEUE_METRICS_`, `insSecsLabel_`, `insTimeAxisStep_`), and `dept-qcd-snapshot` in `SIDE_BUSY_PANELS_`. `summary:v27`, `insights:v27`. Note: col I is the longest WAIT of any call (answered or abandoned), so the card says "Longest wait", not "longest answer time".
+  **Where I left off:** P6 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard; walk S62 / S32's P6 steps; the earlier list still stands (the `Other` column, `rebuildDirectCallHeldDates()`, sign-off on the P4 card form). Next in sequence: P7 (partial days) -- needs the owner to confirm the rule first; P10's read-only match-rate check needs nothing; P11 needs the privacy decision.
+- **2026-11-13 (4) -- Follow-up plan, batch P5 + the four P4 follow-on items IMPLEMENTED (block `.cycle/blocks/260-p5-p4f-broad-implement.md`).** P5: `Config.gs::CUSTODIAL_DEPTS = ['Other']` + `isCustodialDept_`; `Other` is in `OVERVIEW_HIDDEN_DEPTS` (spelled out -- load order), and the coaching scan / gates list and cache warming skip it; a department by name everywhere else. Operator State #93 (the owner adds the roster column: header exactly `Other`, col V, W left blank before the insurance block; all roster readers stop at the first blank header -- checked in all three projects). P4 follow-ons: whole percents on the card (`directWholeRate_`, from the counts), the Direct view keeps its rows (`tdcHeld_`), Team Rings + Team Outbound frost with the page (`sideFrostArm_` / `sideFrostDisarm_` / `trpUnfrost_`), and each side panel folds to its header (`.side-collapse`, `cdr.dept.side.collapsed`). New suite `custodial-dept.test.js`.
+  **Where I left off:** P1-P5 + P3-TZ + the P4 follow-ons committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: add the `Other` column, deploy the dashboard, then `rebuildDirectCallHeldDates()`; sign-off on the P4 card form is still open. Next in sequence: P6 (answer-time trends). P7 needs the owner to confirm the partial-day rule; P11 needs the privacy decision.
+- **2026-11-13 (3) -- Follow-up plan, batch P4 IMPLEMENTED (block `.cycle/blocks/260-p4-broad-implement.md`), plus Transfer retries times in Central (`P3-TZ`, commit a0aa9cd).** P4a: with Team Direct Calls in the side column, `tdcSync_` sets `.dept-side--direct` and every panel keeps its height (Team Rings had collapsed to 26px on the Inbound view and painted over the card). P4b: `refresh()` arms the card (`tdcArm_`, `TDC_.pending`), a failed or unsent page load disarms it, and while busy the newest good figures for the same department stay under a frost (`TDC_.last`, `tdcHeld_`); `TDC_.data` keeps its meaning. P4c: the card form is one headline + one bar, a key line and a three-row block; fixed-column table; block size in the header. Client only, no figure changed. New suite `team-direct-card.test.js`; `drive-deptoutbound.js` gained 6 checks.
+  **Awaiting the owner:** sign-off on the new card form (before/after images were sent in the session: `p4-card-before-after.png`, `p4-side-column-before-after.png`). Known trade: an admin's side column now scrolls on a short window instead of overlapping.
+  **Where I left off:** P1-P4 + P3-TZ committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Next in sequence: P5 ("Other" department; the owner adds the roster column first). P7 needs the owner to confirm the partial-day rule; P11 needs the privacy decision.
+- **2026-11-13 (2) -- Follow-up plan, batch P3 IMPLEMENTED (block `.cycle/blocks/260-p3-broad-implement.md`).** Transfer retries has a second list, `redirects` (answered, then redirected): an ANSWERED consult to X in another department, then an attempt to a colleague of X on the same call, with `takenBy` (a hand-over at or after the first consult). In BOTH copies (`trRetriesOfJourney_` / `tfRetriesOfJourney_`, written from one body, parity corpus 0..18); `cases` unchanged apart from the added sender detail (`senderAt`, `queue`, `beforeSecs`). SQL prefilter: a transfer event AND (a missed ring OR an answered consult). Modal: `#tr-views` switch, default `redirect`. cdr-import's `tfRetryFold_` / TOTAL line count the redirects apart. 3059 unit tests, ci:ui green, 7 bites.
+  **Confirmed on the way in:** the capture records one consult per internal call, so X-then-Y is two consult events, and a linked transfer adds a hand-over event naming who took the caller; before P3 such calls were never cases (the rule needed a missed first attempt) and were only read when the journey also held a missed ring.
+  **Where I left off:** P1 + P2 + P3 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard, push cdr-import, walk S56 / S31 / S69 / S4's new steps. Next in sequence: P4 (Team Direct Calls card) -- the remaining batches are listed in the entry below.
+- **2026-11-13 -- Follow-up plan (owner notes from using the dashboard), batches P1 + P2 IMPLEMENTED (block `.cycle/blocks/260-p1-p2-broad-implement.md`).** PR #414 (E1 / EXC-3) MERGED 2026-11-13 (b26cc3f); the branch was restarted from main. P1: the Call ID chip is neutral unless the call was abandoned (`parentIdBadge` 4th arg), "instant" for a connected outbound call that rang 0-1 s, a yellow `.ob-seg-busy` for missed-while-on-a-call, no "Range:" on the Missed Calls strip, a pinned Transfer retries header, Outlier Fix "Apply selected" for Not an agent. P2: the agent panel's Direct tab -- Direction (Incoming / Outgoing), filter + sort (`AP_.dview`), admin Call ID, outside-number calls out of the list and headline, the colleague table inside its card. Client + CSS only. 3053 unit tests, ci:ui green, 8 bites.
+  **THE PLAN'S REMAINING BATCHES (so `/broad-implement P3` resolves in a fresh session):** **P3** Transfer retries, answered-then-redirected: a new case type where the sender consults X in another department, they talk, then on the same call goes to Y in that department who takes it; rows also show when the sender answered, talk before transferring, the entry queue, X's talk and whether Y took the call; a filter between the two case types and a ranking of who is most often X; dashboard `TransferRetries.gs` AND cdr-import `transferFilter.js` (parity test); FIRST confirm how the capture records a consult followed by a hand-over (believed: such calls are read today only when the journey also holds a missed ring, because the SQL prefilter needs `"missed":true`). **P4** Team Direct Calls card: loader from the first moment + keep the last figures while a range loads, fix the Team Rings sticky header painting over it (no flex rule covers Rings + Direct), declutter (one headline + one bar, one line for answered-when-free, colleague/outside figures in a compact secondary block, one legend line) with a before/after screenshot for owner sign-off. **P5** "Other" department: owner adds a roster column `Other` (one blank column kept before the insurance block); code excludes it from the Overview (`OVERVIEW_HIDDEN_DEPTS`), Coaching flags and cache warming. **P6** answer-time trends: Longest wait per day as a day-bar card (add a MAX to the qcd snapshot's daily tuple) and Avg answer + Longest wait in the Insights trend metric list (daily + monthly series in `computeQcdReport_`, `insightsQueueHealth_`); per queue only; cache bumps. **P7** partial days, core: a new admin-edited sheet of agent days (date, agent, credit e.g. 0.5, reason); ans/day and outbound /day use credited days; calls are never removed, totals and rates never adjusted, and every per-day figure shows attendance ("17.5 of 22 workdays, 9 partial") -- OWNER MUST CONFIRM this rule before P7 starts. **P8** partial days in the Individual Report and Insights: team comparisons move from window totals to per credited day (changes those figures for everyone). **P9** partial-day suggestions from first-to-last call times (admin confirms; ~90 days back). **P10** Transfer retries availability: read-only match-rate check between a transfer attempt and its `direct_calls` row (no shared id; match on date, person, sender, time), then a free / on-a-call column. **P11** callback worklist with phone numbers: resolve the number by Call ID from the raw import tabs at view time on an access-logged page, never in email or Neon; start with a read-only feasibility check. **OWNER DECISION 2026-11-17: YES, with these defaults (all accepted as proposed):** (1) WHO -- admins first; managers only for their OWN department's missed callers, behind a switch that is OFF by default; (2) WHERE -- one page only; never in email, digests, exports, Neon or the cache; (3) HOW MUCH -- the number is revealed PER ROW on click, never shown for the whole list; (4) AUDIT -- every reveal logged: who, when, which call id, never the number itself; (5) SCOPE -- only callers not yet called back, and only while the raw tab still exists (about 14 days). Still first: the read-only check that a number can be reliably resolved from a call id in the raw tabs.
+  **Owner answers already given:** busy colour = light yellow; partial days = admin marks + suggestions, applied to IR and Insights too; "Other" = roster column with exclusions; side-card dates stay; a callback list is only useful with phone numbers.
+  **Where I left off:** P1 + P2 committed and pushed on claude/cool-wozniak-fly3au; no PR (not asked). Owner-side: deploy the dashboard; walk the P1 / P2 steps in S56, S31, S69, S4. Next in sequence: P3.
+- **2026-11-12 -- Broad scan cycle 260, expansion E1 IMPLEMENTED (G1 / EXC-3: exception days on callbacks, the abandon heatmap, the insurer drill and the report emails; block `.cycle/blocks/260-e1-exc3-broad-implement.md`).** PR #413 (Batches 1-11, DCA-6/7, the docs sync) MERGED 2026-11-11 (1624d82) -- the branch was restarted from main for this. One rule, the Inbound report's: a view leaves out an abandon dated on an exception day for that view. Callback counts drop the day where read (SQL + sheet twin); an episode leaves when its FIRST attempt fell on the day (after the engine). Heatmap grid + cell lists, insurer daily drill, five report emails (`ekExceptionNoteRow_`), client `excPartHtml_`. Prefixes: inbound v17, inboundHeatmap v5, outboundReport v12, outboundDirect v6. 3044 unit tests pass; ci:ui green; 11 bites.
+  **Decisions:** the company callback table keeps a one-department day (its row then differs from that department's own view); the callback sections do not follow the admin include switch and say so; a callback placed on an exception day still counts; the alert reason's miss list is unchanged; team-tools is another repo.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au (one commit on top of main); no PR (not asked). Owner-side: deploy the dashboard, `runLiveSmoke`, re-run `runOutboundVettingCheck` over a window holding 09/21, walk S68's EXC-3 step -- plus the still-open list in the Batch 11 entry below. Remaining of the scan: E2-E5 and the deferred owner rulings (F35, F36, F34, F28, F52).
+- **2026-11-11 (2) -- /sync-docs after cycle 260 (F8e).** Five checks: no stale entry of substance (every code identifier, test, script and doc CLAUDE.md names resolves; every operator-class Script Property in the three registries is documented; no new public function, sheet, trigger or scope went undocumented on the branch). CLAUDE.md had passed its 90% warning line (185.1 KB), so three surface bullets (E5 chips, missed-card tiers, threshold-drift chip) moved VERBATIM to `docs/client-ui-conventions.md` -- 180.4 KB after, no rule dropped. Small additions: `withQuotaGuardLock_` on the beacon bullet, KBF / NPS on the client index, the Outlier Fix mark-all confirm. Two `Data.gs` comments corrected (comment only).
+  **Where I left off:** PR opened for claude/cool-wozniak-fly3au (Batches 1-11, DCA-6, DCA-7, this sync), to merge on green CI. The owner-side list in the Batch 11 entry below still stands. What remains of the scan: the deferred owner rulings (F35, F36, F34, F28, F52) and expansion batches E1-E5.
+- **2026-11-11 -- Broad scan cycle 260, Batch 11 IMPLEMENTED (HDN-1..7: scan F49, F32, F50, F51, F53, F54, F55 -- hardening and docs; block `.cycle/blocks/260-batch11-hdn-broad-implement.md`). ALL 11 FIX BATCHES OF THE SCAN ARE NOW DONE.** Code: the report-email throttle and the client-issue caps decide and reserve under the script lock and send outside it (`withQuotaGuardLock_`, fail open); the insurance sync creates its table before its transaction; two unreferenced definitions removed. Docs: the six "unrecoverable" passages, two stale cache versions (the sync test now reads per-call-capture.md and neon-layer.md), the journey window as an export-time rule, exception days in architecture.md, the README deep links, INV-30's six non-report prefixes, the Data.gs header, two CLAUDE.md counts, and this file's outstanding list. 3033 pass; ci:ui green; 6 bites. NET 0.
+  **Decisions:** the throttle fails OPEN when the lock is busy (it guards a quota, not access). The journey finding was fixed in the docs only -- whether the export should blank journeys as rows age is the owner's call.
+  **Owner-side for the whole cycle (one pass):** push cdr-import and cdr-report; deploy the dashboard; `rebuildDirectCallHeldDates()` once; re-run `runOutboundVettingCheck` (#63); `runLiveSmoke`; Refresh now on both export tabs; read the two Outage copy rows on Health; after the next import open Admin → Outlier Fix (add the real agents, then mark the rest Not an agent); walk S39's KBF steps, S71 and S72.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-11 (+ DCA-6, DCA-7); no PR (not asked). What remains of the scan: the deferred owner rulings (F35, F36, F34, F28, F52) and the expansion batches E1-E5 (new capability).
+- **2026-11-11 -- Broad scan cycle 260, Batch 10 IMPLEMENTED (NPS-1..6: scan F73, F81, F78, F76, F80, F43 -- names, announcements, print, small screens; block `.cycle/blocks/260-batch10-nps-broad-implement.md`).** Client only. Ctrl+P with a modal open prints the modal (a `beforeprint` hook + print rules); modal tables scroll by themselves under 820 px and the modal sheds padding under 600 px; canvases are named images and the three My Department tables named and scoped; 29 status lines are live regions; an amber or red value says its tier via CSS-generated text plus a hover title; `--on-accent` / `--on-dir-out` for the three filled category segments. 3029 pass; ci:ui green; 10 bites. NET +2 (F73 and F43 reproduce on ordinary use). **Decisions made:** the tier words are CSS-generated content, not a DOM span (a span leaked into the day quick view's Range line, and an absolute one widened the page); no per-modal Print buttons; day bars left alone. **Open follow-ons (owner):** `--on-good` / `--on-warn` in the print block; the day bars' colour-only tier; whether any modal should get a Print item.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-10 (+ DCA-6, DCA-7); no PR (not asked). Next in the scan plan: Batch 11 (hardening and docs: scan F49, F32, F50, F51, F53, F54, F55), then the deferred owner rulings and the expansion batches E1-E5.
+- **2026-11-11 -- Broad scan cycle 260, Batch 9 IMPLEMENTED (KBF-1..6: scan F70, F71, F79, F74, F75, F77 -- keyboard and focus; block `.cycle/blocks/260-batch9-kbf-broad-implement.md`).** Client only. The focus trap's list is one shared `focusablesIn_` (the F70 fix itself landed with DCA-7); fifteen modal closers return focus through `returnFocusTo_` (opener, else its menu's trigger, else the page title); the missed-calls half-hour drill has a picker that is clipped until focused; both edit popovers take and return focus; four chip groups write `aria-pressed`; glossary labels are tab stops so their tooltip opens on focus. 3021 pass; ci:ui green; 10 bites. NET 0 (nothing shown to have fired; no new failure mode). **Decisions made:** the picker is hidden until focused rather than always shown; the two per-agent-card chips stay hover-only (UD-4); a popover closed by an outside click does not take focus back. **Open follow-ons (owner):** IR's close skips the Reports ▾ trigger; whether the picker should always show; the per-card chips.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-9 (+ DCA-6, DCA-7); no PR (not asked). Next in the scan plan: Batch 10 (names, announcements, print, small screens: scan F73, F81, F78, F76, F80, F43).
+- **2026-11-11 -- DCA-7 (owner follow-up to DCA-6: "for the first limit, is it possible to address that?").** The limit was a person on an extension NO roster cell lists (a new hire on a new extension). cdr-import's Direct build now names those people too, in the same Pipeline Health note tail (third element empty; capped at 100 apart from the 20 roster-extension names; a cut list ends with `["+","","",n]`). Credit is unchanged. Because that set is every colleague the roster does not track, the dashboard gained a "Not an agent" list: `setOrphanIgnored` (admin gate + validation + lock + an `ignore` / `unignore` Orphan Fix Log row), stored in the `ORPHAN_IGNORE_NAMES` Script Property, hiding ONLY an unlisted-extension entry. Outlier Fix lists these people last, with a per-row "Not an agent", a "Mark all as not agents" (confirmed) and a restorable list; the Overview banner counts them apart (`orphanNag.unlistedCount`). Also fixed on the way: the shared modal focus trap did not know a `<details>` summary is tabbable, and counted the hidden contents of a closed one, so a modal ending in a fold let Tab walk out (found by drive-admin); and the Alerts modal's Pipeline Health panel now shows the note's name list as a count. **Owner steps:** push cdr-import, deploy the dashboard; after the next import open Admin → Outlier Fix, add the real agents (New Assignment), then mark the rest Not an agent -- expect a long first list. Operator State #83, INV-01 / INV-44 / INV-47, S31.
+- **2026-11-11 -- DCA-6 (owner question, outside the scan batches): the orphan check finds a new hire on a former employee's extension.** The owner was right for anyone who takes no queue calls: DCA-1 credits their direct calls to no one, logged only in the execution log, and the orphan check read DQE Historical Data only. cdr-import now names them at the end of each Direct build's Pipeline Health note (`| unrostered=[[name, ext, roster name, calls], ...]`); the dashboard's `computeOrphans_` folds them in, so Outlier Fix lists them with their own extension pre-filled and the Overview orphan banner counts them. 3005 pass; ci:ui green; 6 bites.
+  **Decisions:** surfaced through the existing orphan list + nag, not a new email (a shared phone showing a room label would email daily with no clean fix). The channel is the Pipeline Health note (the established cross-project channel), newest Direct row per date. Only a name on an extension a ROSTER cell lists is flagged; an extension no cell lists is not. The held-days rebuild does not write the note, so detection starts at the first import after the push.
+  **Owner-side:** push cdr-import and deploy the dashboard (both needed); after the next import open Admin -> Outlier Fix.
+  **Open follow-ons:** an ignore list for shared-phone labels; having `rebuildDirectCallHeldDates()` write the note so held days fill in at once.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-8; no PR (not asked). Next in the scan plan: Batch 9 (keyboard and focus).
+- **2026-11-10 (5) -- Batch 8 IMPLEMENTED (block 260-batch8-ccx-broad-implement).** CCX-1..8, dashboard CLIENT only (no server file): escalation drafts survive the list reload (F38); a dept-page deep link waits for the latest-date read and loads once -- harness 17 -> 10 requests for a manager's Insights link, 22 -> 16 for an admin's, none repeated (F72); the Refresh button drops the five newer section stores (F39); the day quick view does not keep a partly-failed day (F42); four small feedback gaps (F45); Callbacks Retry (F41); the Health backup probe failure is shown (F44); mangled link dates are dropped and inert group rows lose the pointer (F82). 2995 pass; ci:ui green; 17 bites. NET +1.
+  **Decisions:** F72's "check V6 first" could not be done from here (it is a production execution count); the harness reproduced the over-fetch and the code ordering explains it, so the fix went in and V6 is now the post-deploy check (S71). Only links that land on the dept page wait for the dates -- modals and Escalations open at once -- with a 10 s fallback, and a user who navigates meanwhile is not pulled back. CCX-3 clears from the Refresh BUTTON, held answers only: clearing on every refresh() doubled Team Direct Calls after a typed date plus Refresh (drive-deptoutbound.js caught it). Callbacks keeps its error with a Retry rather than refetching on every sync.
+  **Owner-side:** deploy the dashboard; count executions on a digest link (V6); walk S71. Earlier batches' steps still stand (cdr-report + cdr-import pushes, `rebuildDirectCallHeldDates()`, `runOutboundVettingCheck`, `runLiveSmoke`, the Outage copy rows, the Outbound keep days).
+  **Open follow-ons:** the boot's Overview fetch on a deep link; the typed-date-plus-Refresh double summary request; drafts in the create / edit form and thread boxes.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-7; no PR (not asked). Next in the plan: Batch 9 (keyboard and focus: scan F70, F71, F79, F74, F75, F77).
+- **2026-11-10 (4) -- Batch 7 IMPLEMENTED (block 260-batch7-ofb-broad-implement).** OFB-1..5 across all three projects, the outage fallback, backups and retention: the Inbound / Outbound Calls export sorts on a failed run too, re-sorts an out-of-order tab before it connects and stores changed-date progress per date (F48); two Health rows watch the outage copies (F46); backup part files are written last-first so a failed part never freezes a month (F65); the retention prune checks DQE and runs the Direct and per-call catch-ups before deleting a tab (F59); the exports drop empty columns and the cell-cap rationale is corrected (F47). 2976 pass; ci:ui green; 12 bites. NET -1 (no fix shown to have fired this month; OFB-4 adds a failure mode).
+  **Decisions:** OFB-4 uses the pending loop's own catch-ups (it repairs, not only checks) and the Pipeline Health log for the DQE outcome, since a day with no DQE rows can be legitimate. The per-run count cap was dropped for a time budget, so a backlog still clears in one night. The Health row allows one workday of lag (the export runs before the import can land). The Outbound tab's 400-day default was NOT lowered: that deletes rows and is the owner's call.
+  **Owner-side:** push cdr-report and Refresh now on both export tabs; push cdr-import and read the next `retentionPrune` row; deploy the dashboard and read the two Outage copy rows; decide the Outbound keep days. Earlier batches' steps still stand (`rebuildDirectCallHeldDates()`, `runOutboundVettingCheck`, `runLiveSmoke`).
+  **Open follow-ons:** Outbound keep days vs the cell cap; a part count for backup months; a held tab is never escalated; the Health order check sees only the newest 500 rows.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-6; no PR (not asked). Next in the plan: Batch 8 (client correctness: scan F38, F72, F39, F42, F45, F41, F44, F82).
+- **2026-11-10 (3) -- Batch 6 + the Batch 5 follow-ons IMPLEMENTED (block 260-batch6-gca-broad-implement).** GCA-1..8, dashboard only: `runOutboundVettingCheck` compares every abandon on both sides with exception days included (it read MISMATCH on every company window since CBX-1); outbound, Overview and Direct payloads known to be short are cached for `DEGRADED_CACHE_TTL_SECONDS` (10 min), not 6 h; `runInboundQcdParityCheck` is inconclusive over an empty window and case-insensitive; Callbacks by department is stripped server-side for non-admins; an alert run that sent drops the Overview blob; DIAL_IN_LABELS joins the Direct key; three over-size cache skips are logged. RUN-9..11: the callbacks reason is judged as of the assessed day (`cutoffIso`); Alert Config / Dept Config sheet fallbacks under `CONFIG_SOURCE=neon` are flagged (alerts outcome WARN, Health `config-source` row); the queue report claim is released under the script lock. 2961 pass / 0 fail / 1 skipped; bites 18/18; ci:ui green. NET 2 - 1 = +1.
+  **Decisions:** "follow-on items" was read as the list in the Batch 5 summary. Two of its five were left on purpose: the agent-low `no-data` row does not turn the outcome (it would on every small-team day off), and G5 (smoke from the deploy script) is an expansion item. A degraded payload is cached BRIEFLY, never left uncached -- uncached, an outage recomputes on every request. The via-failure signal is a per-execution flag, not a payload field, so the Neon and sheet paths keep shaping the same payload. The harness now records each cache put's TTL (`state.cacheTtls`).
+  **Owner-side:** deploy the dashboard; re-run `runOutboundVettingCheck` (#63) before trusting any earlier MISMATCH; `runLiveSmoke`. Batches 1-2 still need the cdr-import + cdr-report pushes and `rebuildDirectCallHeldDates()`.
+  **Open follow-ons:** a Neon-to-sheet config sync would make the CONFIG_SOURCE=neon fallback safe; G5 awaits its expansion batch.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-5; no PR (not asked). Next in the plan: Batch 7 (outage fallback, backups, retention: scan F48, F46, F65, F59, F47).
+- **2026-11-10 (2) -- Batch 5 IMPLEMENTED (block 260-batch5-run-broad-implement).** RUN-1..8, dashboard only, the scheduled engines' own outcomes: the callbacks alert reason judges against the calls loaded (a repeat caller is a miss, not "cannot be judged"); an unchecked reason leads the run `INCONCLUSIVE` and a failed held coaching email leads `NOTIFY-FAILED`; the all-department budget leaves memoized grid reads out of the next department's projection; the daily alerts mark the date and record an interim outcome before the reasons (`runAlertsCore_` hooks.afterDepts); a digest sent from the sheet list under `CONFIG_SOURCE=neon` records `WARN`; `COACHING_NOTIFY_PENDING` is cut to fit a property; the queue report claim is released by its owner only; `runLiveSmoke` fails on an errored Queue health. 2945 pass / 0 fail / 1 skipped; bites 13/13; ci:ui green. NET 1 - 0 = +1.
+  **Decisions:** "loaded" for the callbacks reason is the engine's own `obEpObservedThrough_` (so an unknown load date means through yesterday, as the engine assumes). Only the callbacks reason's two could-not-check rows are `unevaluated`; the agent-low `no-data` row is not. RUN-3 discounts only reads that were memoized -- a failed Neon fetch stays in the projection. The interim alerts outcome is written only while a reason rule exists.
+  **Owner-side:** deploy the dashboard; `runLiveSmoke`; if a callbacks reason is set, expect it to email callers it used to skip. Batches 1-2 still need the cdr-import + cdr-report pushes and `rebuildDirectCallHeldDates()`.
+  **Open follow-ons:** Alert Config / Dept Config readers fall back to the sheet under `CONFIG_SOURCE=neon` with no note; G5 (smoke from the deploy script) is unblocked.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-4; no PR (not asked). Next in the plan: Batch 6 (release-gate tools + cache anchors: scan F18, F22, F9, F66, F33, F11, F16, F17).
+- **2026-11-10 -- Batch 4 IMPLEMENTED (block 260-batch4-exd-broad-implement).** EXD-1..5, dashboard only, exception days (#81) end to end: the day-strip reason is escaped (+ a sweep); the admin "include exception days" switch engages (it resolved no user and never turned on) and the editor's audit rows name the admin; the Daily Call Queue Report poll records `EXCEPTION-DAY` once for an all-department exception day and a preview / manual send says why; the digest names the exception day instead of blaming the roster; the agent-low alert reason logs `no-data` for a window with an empty workday and folds duplicate rows; the rule History shows `exception-day`; `reportSig_` and the outbound view key carry the include switch. 2931 pass / 0 fail / 1 skipped; bites 10/10; ci:ui green. NET 1 - 1 = 0.
+  **Decisions:** the queue report is SKIPPED with an admin-visible outcome on an all-department exception day (no message to subscribers; the sent-marker is not claimed, so removing the day sends it). A workday with no agent data anywhere in the N-day window makes the agent-low reason `no-data`, not `quiet`. The include flag joins signatures inside `reportSig_` (one place) rather than at each call site.
+  **Owner-side:** deploy the dashboard; as an admin click "Include them" on a window holding 09/21 and confirm the totals move (first live run of that view); `runLiveSmoke`. Batches 1-2 still need the cdr-import + cdr-report pushes and `rebuildDirectCallHeldDates()`.
+  **Open follow-ons:** whether subscribers should get a one-line notice on an exception-day morning (owner choice); weekly / monthly digests do not name an excluded day; the web queue report for an exception day shows empty with no note.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-3; no PR (not asked). Next in the plan: Batch 5 (engines: scan F19, F26, F10, F30, F69, F27, F67, F68).
+- **2026-11-09 (7) -- Batch 3 IMPLEMENTED (block 260-batch3-num-broad-implement).** NUM-1..10, dashboard only: CSR transfer figures leave out exception days; the Insights key separates an agent-free run from a whole-roster pick; a department's callback figures match its Callbacks-by-department row (the engine sees the other teams' attempts, `obEpMineOnly_` keeps the dept's own episodes; SQL, sheet twin, drill lists and the alert reason); one Overview tile takes one queue-split verdict (`verdictFromIso`); the Transfer retries filter folds a sub-queue; the Overview says so when the latest day is an exception day; two combined-view de-dup cases (a one-dept exception day, an unmapped sub-queue); the outbound-only agent day; the Direct tab's ordered read. Cache: `summary:v26`, `outboundReport:v11`, `companyOverview:v31`, `overviewChartYtd:v4`. 2920 pass / 0 fail / 1 skipped; bites 14/14; ci:ui green. NET 4 - 2 = +2.
+  **Decisions:** NUM-3 keeps the predicate as a `mine` column rather than a second query; rows without the flag count as the view's own, so no fixture changed. NUM-4's verdict span is the tile's 30 days; with no evidence in it the whole-row verdict stands. NUM-7 drops a repeat only on a strict-subset of excluded days with no narrowing in either part.
+  **Owner-side:** deploy the dashboard; compare a department's Callbacks fold with its Overview row (S48 / S59) -- a department can list MORE "not called back" callers than before, which is the company table's answer; `runLiveSmoke`. Batches 1-2 still need the cdr-import + cdr-report pushes and `rebuildDirectCallHeldDates()`.
+  **Open follow-ons:** direct-line callbacks may carry the same dept-vs-company mismatch (unverified); the "no per-call rows" note on a recent inbound-without-journey day; the NUM-6 note on sub-queue mini cards.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batches 1-2; no PR (not asked). Next in the plan: Batch 4 (exception days end to end: scan F37, F31, F25, F29, F40).
+- **2026-11-09 (6) -- Batch 2 IMPLEMENTED (block 260-batch2-cap-broad-implement).** CAP-1..7, cdr-import + the cdr-report build copy: the Direct engine uses the captures' caller-direction test (a recording leg no longer erases an outbound call); a roster / alias read that throws is retried, then reported under `buildDQE:roster`; `assertSourceLayout_` refuses a source whose columns moved; a missed direct call is busy only if every ring found the agent busy; a per-call backfill stopped by an unreachable Neon logs failure; the dial-in reading uses the build's own resolver; a throwing post-write sort no longer fails a written DQE build. 2906 tests, bites 13/13, ci:ui green. NET 1 - 1 = 0.
+  **Owner-side:** push cdr-import AND cdr-report (INV-16 copy); deploy the dashboard; run `rebuildDirectCallHeldDates()` once; watch the first daily import for a "Source layout mismatch" email (CAP-3 has not met live data).
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au with Batch 1; no PR (not asked). Next in the plan: Batch 3 (wrong numbers on manager screens: scan F8, F7, F20, F12, F21, F13, F14, F15, F23, F24).
+- **2026-11-09 (5) -- BROAD SCAN (cycle 260) + Batch 1 IMPLEMENTED (block 260-batch1-rb-broad-implement).** The scan: 82 findings, none Critical, two High; the plan is 11 fix batches + 5 expansion batches, tracked on the checklist page https://claude.ai/artifact/KLTK3S1vprAy48Q8RDggwF (the scan report itself is in the session record). Batch 1 = RB-1..7, cdr-import: a failed bulk date is reported ❌ and logged under a failure-only step; the editor-run Direct build uses the day most rows are on; Make a date whole writes through the daily path; the QCD force-loss guard counts rows that carry a call; a resumed batch archive re-mirrors from the sheet; the CSR header check runs before the force-delete; honest bulk bookkeeping. 2895 tests, bites 11/11, ci:ui green. NET 1 - 2 = -1 (two disclosed behaviour changes).
+  **Owner-side:** push cdr-import; deploy the dashboard (two Health step names). Nothing retroactive.
+  **Where I left off:** committed + pushed on claude/cool-wozniak-fly3au; no PR (not asked). Next in the plan: Batch 2 (capture rules: scan F3, F60, F58, F4, F62, F6, F63).
+- **2026-11-09 (4) -- SHIPPED: PR #411 merged (116b7b1) on CI green** -- CLN-1..6 + DCD-1 (Save all Dept Config defaults as sheet rows). **Owner-side:** deploy the dashboard + push cdr-import; Dept Config → Save all defaults, then A_Q_Sales_MWC on Sales' aliases and A_Q_BackUp_FieldOps on Field Ops'; DIAL_IN_LABELS (five main lines); roster updates from the 11-09 logs; re-run `diagnoseTransferBouncesAllDates` + `rebuildDirectCallHeldDates()`; walk S36 / S68. Open for later: the 6c Outbound release (#63), exception days for callbacks / heatmap / emails / team-tools, rulings SEC-1 / SEC-2 / PIPE-8. Branch restarted from main.
+  **Where I left off:** nothing open on the branch; owner resumes in a fresh session.
+- **2026-11-09 (3) -- DCD-1 IMPLEMENTED (owner: one-click save of Dept Config defaults).** Admin ▾ → Dept Config shows a bar naming the departments on built-in defaults only; **Save all defaults as sheet rows** writes them (`saveDeptConfigDefaults`, through `saveDeptConfig`'s own body via `saveDeptConfigRow_`), leaves a deactivated row alone, reports a refused one, republishes the standards once. **Owner-side:** deploy the dashboard, click the button, then add `A_Q_Sales_MWC` to Sales' Inbound queue aliases and `A_Q_BackUp_FieldOps` to Field Ops' (the button only saves what is already built in), re-run `diagnoseTransferBouncesAllDates`; walk S36's DCD-1 step.
+  **Where I left off:** committed + pushed on the branch with the CLN batch; no PR (not asked).
+- **2026-11-09 (2) -- CLN-1..6 IMPLEMENTED (block 259-cln).** Ext grid reads cols C..D; the all-dept queue report stops before a dept that could not finish inside its budget; qcd-report test stubs restored, not deleted; IR `deptStats.deptActiveDays`; the bounce diagnostic ignores outside-party answers; the Dept Config modal explains "default" rows. **Owner-side:** Edit + Save the Dept Config "default" rows (PAP, Spanish, PAK, Billing, Denials), A_Q_Sales_MWC on Sales' aliases (XB-0c ruling), A_Q_BackUp_FieldOps on Field Ops; roster the unrostered answerers / new extension holders from the 11-09 logs; push both projects; re-run `diagnoseTransferBouncesAllDates`. NX closed by the owner's 11-09 run (6 only-record legs, all genuine forwards).
+  **Where I left off:** committed + pushed on the branch; no PR (not asked).
+- **2026-11-09 -- SHIPPED: PR #410 merged (bdfea6e) on CI green** -- EXC-2 (exception days leave the per-call report totals; call-level views mark the day), the test-coverage cleanup (stale inbound-modal exemption gone + pin), ADT-3 (direct writers' DDL before the transaction). **Owner-side:** push cdr-import (ADT-3); deploy the dashboard; walk S68's EXC-2 step. Branch restarted from main.
+- **2026-11-06 (9) -- EXC-2 + test coverage IMPLEMENTED (block 259-exc2; owner picked "report totals", team-tools in a separate session).** Exception days now leave the Inbound + Direct Calls reports, the Overview tiles' outbound + direct lines and My Department's outbound table / Team Direct Calls card (one SQL form, `exceptionNotInSql_`); Caller Lookup, the call path drill and Agent Day keep every call and MARK the day. The stale 'inbound-modal' exemption is gone (driven since SB-5) with a pin. Still counting the day: callbacks, heatmap, direct-line callbacks / repeats, insurer daily, email text, team-tools. **Owner-side:** push the dashboard; walk S68's EXC-2 step.
+  **Where I left off:** committed + pushed on the branch with ADT-3; no PR (not asked).
+- **2026-11-06 (8) -- ADT-3 IMPLEMENTED (P-9 fix).** Both direct writers (`writeDirectCallRowsToNeon_`, `backfillDirectCallToNeon`) ran their CREATE / ALTER inside the write transaction (ACCESS EXCLUSIVE on direct_calls until commit); the DDL now runs in autocommit first (direct-call-backfill.test.js, 2 bites). **Owner-side:** push cdr-import.
+- **2026-11-06 (7) -- SHIPPED: PR #409 merged (9813e7a) on CI green** -- DID-1..3 (their direct line vs a main line, `directCall:v7`), ADT-1 (panel list header), ADT-2 (Direct tab summary + `busy_with`), sync-docs. **Owner-side:** push cdr-import -> `rebuildDirectCallHeldDates()`; `DIAL_IN_LABELS` lists the five main lines (#92); push the dashboard + roll the deployment; walk S56, S70. Branch restarted from main.
+- **2026-11-06 (6) -- ADT-2 IMPLEMENTED (block 259-adt2).** The agent panel's Direct tab summary (to / from their line, colleagues each way, outside callers by line / main, who busy calls were with, work vs after hours) and `direct_calls.busy_with` (owner ruling: name who the other call was with, never a number). **Owner-side (with DID-1..3 + ADT-1):** push cdr-import -> `rebuildDirectCallHeldDates()`; check `DIAL_IN_LABELS` (#92); push the dashboard; walk S56, S70.
+  **Where I left off:** committed + pushed on the branch; DID-1..3 + ADT-1 + ADT-2 unmerged, no PR (not asked).
+- **2026-11-06 (5) -- ADT-1 IMPLEMENTED (block 259-adt1).** The agent panel lists' header row (Direct, Inbound, Outbound) sat ~80 px down the rows: AC-1's sticky offset reached the nested tables; child combinators scope it to the outer table. Dashboard CSS only. **Owner ruling recorded for ADT-2:** a call missed while on another call names who that call was with (a cdr-import busy-with field). **Owner-side:** push the dashboard (with DID-1..3's).
+  **Where I left off:** committed + pushed on the branch; no PR (not asked). ADT-2 next when asked.
+- **2026-11-06 (4) -- DID-1..3 IMPLEMENTED (block 259-did; owner: build the direct-line split, admin-only).** cdr-import stores `via` + `dial_in` on `direct_calls`; the Direct Calls report (`directCall:v7`), Team Direct Calls card and the agent panel's Direct tab split outside calls into their direct line / a main line. **Owner-side:** push cdr-import -> `rebuildDirectCallHeldDates()`; check `DIAL_IN_LABELS` lists the five main lines (#92); push the dashboard; walk S70. **Queued next (planned, not built):** ADT-1 the Direct tab header mid-table (AC-1 sticky rule reaches nested tables), ADT-2 a Direct tab summary block -- docs/next-steps.md.
+  **Where I left off:** committed + pushed on the branch; no PR (not asked).
+- **2026-11-06 (3) -- SHIPPED: PR #408 merged (a125e6f) on CI green** -- SPEED-1..4 (parallel ci:ui drivers, smoke role shards, sibling deploys skip ci:ui, once-per-commit `.last-gated`). CI's ui-harness job ran 4 min 26 s (was ~14.5). No owner action; the next `scripts/deploy.sh` uses it. Branch restarted from main.
+- **2026-11-06 (2) -- SPEED-1..4 IMPLEMENTED (block 259-speed-broad-implement; owner: faster deploys without checking less).** ci:ui drivers run 4 at a time (UI_HARNESS_JOBS), drive-smoke as admin + manager shards, sibling deploys skip ci:ui (dashboard-only harness, pinned), and a gate passed at a clean commit is not re-run for it (.last-gated, REGATE=1). Measured ci:ui 877 s -> 240 s. Tooling only.
+  **Where I left off:** committed + pushed; PR to merge on CI green.
+- **2026-11-06 -- SHIPPED: PR #407 merged (fb1358a) on CI green** -- DID-0 `diagnoseDirectDialIn` / `diagnoseDirectDialInAllDates()` (cdr-import, read-only): own direct number vs a main line through the phone menu vs via a colleague, per number and per agent (Operator State #91). **Owner-side:** push cdr-import, run `diagnoseDirectDialInAllDates()`, send the log -- it decides whether the Direct report splits "their direct line" vs "a main line". Branch restarted from main.
+  **Where I left off:** nothing open on the branch; waiting on the DID-0 log.
+- **2026-11-05 (3) -- SHIPPED: PR #406 merged (149e153) on CI green** -- DCA-3/4/5, DO-1 (Direct outbound = colleagues, outside calls as a line, `directCall:v6`), TD-1/2, CO-1/2, sync-docs. **Owner-side:** push cdr-import -> `rebuildDirectCallHeldDates()` -> `diagnoseDirectCallAttributionAllDates()`; Outlier Fix aliases for the two spelling variants; push the dashboard + roll the deployment; walk S44, S64, S67. Branch restarted from main.
+- **2026-11-05 (2) -- TD-1/TD-2 + CO-1/CO-2 IMPLEMENTED (block 259-td-co-broad-implement; owner notes).** Transfer detail chips vs prior + the other-destinations list; coaching gate busy/saved states, Save all, a flat answer-% gate; the worklist rows and both coaching emails restyled. Dashboard only. **Owner-side:** push the dashboard + roll the deployment; walk S44 and S64.
+  **Where I left off:** committed + pushed on the branch with DCA-3/4/5; no PR (not asked).
+- **2026-11-05 -- DCA-3/4/5 IMPLEMENTED (block 259-dca345-broad-implement; owner after the first all-dates attribution run).** DCA-3 reassigned / unlisted extensions credit the roster person 8x8 names (3,067 legs were going to no one); DCA-4 "Parker" no longer matches call park (a current employee read 151 -> 0); DCA-5 Spanish + CSR agents credited to CSR. cdr-import only. **Owner-side:** push cdr-import, re-run `rebuildDirectCallHeldDates()`, then `diagnoseDirectCallAttributionAllDates()`; Outlier Fix aliases for the two spelling variants (Shrivastava, Millie S.).
+  **Where I left off:** committed + pushed on the branch; no PR (not asked).
+- **2026-11-04 (2) -- AC batch IMPLEMENTED (block 259-ac-dca2-broad-implement; owner testing notes).** AC-1 sticky Agent Call Metrics header; AC-2 ATT in the Talk column; AC-3 combined ans/day counts a CSR + Spanish agent's day once (summary:v25); AC-4 Outbound view lists only diallers; AC-5 Transfer % amber 30-32 / red above 32; DCA-2 (owner's screenshot: Hope (Heeya) Shah, Laura Flores, Regina Malijan in the Direct view) -- a blank-name direct leg is credited only when the extension named its roster person that day; AC-6 the agent panel's admin-only Direct tab over a new Neon `direct_calls` capture (Operator State #90).
+  **SHIPPED: PR #404 merged (9e23d1f) on CI green (test, lint, ui-harness; local ci:ui 827 checks); branch restarted from main.**
+  **Owner-side:** push dashboard + cdr-import; run `rebuildDirectCallHeldDates()` once (applies DCA-2 to held dates + fills the Direct tab); check the Standards editor's Transfer amber (35 -> 32 if saved); optional `diagnoseDirectCallAttributionAllDates()`; walk S56, S57. Older dates keep the old direct credit until re-imported (#56).
+  **Where I left off:** committed + pushed on the branch; no PR (not asked).
+- **2026-11-04 -- owner ran the post-deploy steps.** ESC-C2 preview found 0 gaps (backfill added 0; #88 closed). TR-0 all-dates census: 61 retries / 10 days, 49 CSR -> Power; first attempts 1 quick decline / 4 rang out / 56 voicemail, but 20 rang <=8 s -- quick sends to voicemail. **TR-2 implemented:** ring time decides before voicemail in BOTH `tfRetryOutcome_` and `trRetryOutcome_` (8 s line unchanged), modal wording updated. **Owner-side:** push cdr-import + dashboard, re-run `diagnoseTransferRetriesAllDates` (expect ~20 quick declines / ~37 voicemail), open Admin -> Transfer retries.
+- **OWNER-SIDE OUTSTANDING (consolidated 2026-11-04; pruned 2026-11-11 by scan F51 -- three items here were recorded as done by LATER entries and are struck, not deleted):**
+  1. Apps Script version cap (DEP-5): if the deploy refuses at 200, delete old versions in Project History (keep the live one + ~20). STANDING.
+  2. Push dashboard + cdr-import, roll the dashboard deployment. SUPERSEDED: cycle 260's batches each carry their own push / deploy list (the entries at the top of OPEN NOW); deploy once for all of them.
+  3. ~~`previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (#88)~~ DONE 2026-11-04: the preview found 0 gaps, the backfill added 0, #88 closed (the "owner ran the post-deploy steps" entry above).
+  4. ~~`diagnoseTransferRetriesAllDates` and send the census (#89)~~ DONE 2026-11-04: 61 retries / 10 days; it produced TR-2 (ring time decides before voicemail; the 8 s line unchanged). Still open from it: re-run the census after the TR-2 push (expect about 20 quick declines / 37 voicemail).
+  5. Walk S48, S58, S60, S69 (and S57 for the four-way switch); check Transfer % on the CSR Agent Call Metrics table. OPEN.
+  **Follow-ons:** ~~exception days (#81 phase 2) on the Overview tile outbound / direct lines and the Direct Calls report~~ DONE by EXC-2 (PR #410, 2026-11-09; walk S68's EXC-2 step). STILL OPEN, needs an owner call: the tile's direct-line row must be released together with the Direct Calls report (one strip in `personalizeOverview_`).
+- **2026-11-02 (10) -- SHIPPED: [PR #401](https://github.com/robinchoudhuryums/call-data-reporting/pull/401) merged on green CI (merge c609554)** -- CBX-1, DL-R3, OVD-1, OVD-2 + /sync-docs. Branch restarted from main.
+  **Owner-side:** push the dashboard and roll the deployment; walk S48, S58, S60.
+  **Where I left off:** nothing open on the branch.
+- **2026-11-02 (9) -- OVD-2 (owner): the Overview tiles draw no split bar** -- the direct-line bar AND SB-3's outbound connected bar are gone; the direct-line row keeps its rate, chip and counts in words. Unit + drive-outbound-e green. **Owner-side:** unchanged (push the dashboard, roll the deployment, walk S58 + S60).
+- **2026-11-02 (8) -- DL-R3 + OVD-1 IMPLEMENTED (block 259-dlr3-ovd1-broad-implement; owner: "build both mocks, including Insights, and add the per-dept hours split").** DL-R3: Direct lines (Overview + Insights) in the Agent Call Metrics shape -- the summary is one row per hours group (work / after / all: callers, one bar with "called back / not", both rates, the median); the department / line-owner table uses the same cells with an All / Work / After hours switch fed by new per-row `work` / `after` figures (`outboundDirect:v5`); a brief grid item got `min-width: 0` (the wider table grew it under the side panels). OVD-1: each Overview tile's split bar is the DIRECT-LINE answer rate (answered / (answered + missed while free), busy shown not rated, a points chip vs the prior window, counts in words), from one grouped `direct_call_history` read on the outbound read's connection; the outbound row stays text; admin-only, stripped for every non-admin (`companyOverview:v30`).
+  **Owner-side:** push the dashboard and roll the deployment; walk S58 + S60.
+  **Where I left off:** committed + pushed on the branch; no PR (not asked). Follow-ons in the block (exception days not applied to the tile lines, like the Direct Calls report; release the tile row with the Direct Calls report).
+- **2026-11-02 (7) -- CBX-1 IMPLEMENTED (owner ask).** The company-wide callback figures (Overview -> Callbacks by department: summary, series, total, CSV) leave out CSR and its Spanish sub-queue (owner: Spanish too); their rows stay, marked *, with a note under the total and "not counting CSR and Spanish" in the heading. `OB_CB_COMPANY_EXCLUDED_DEPTS_`, `outboundReport:v10`. 2803 tests, bites 4/4. Pushed; NO PR yet.
+  **Also:** mocked (not built) the Overview card's split bar as the department's DIRECT-LINE answer rate (answered / missed while free / busy), the outbound figures kept as a text line -- awaiting the owner's go. Building it needs per-dept direct-call figures in the Overview payload (admin-only, like the outbound line) for each card window.
+- **2026-11-02 (6) -- SHIPPED: [PR #400](https://github.com/robinchoudhuryums/call-data-reporting/pull/400) merged on green CI (merge e300e50)** -- DEP-5 + Batches 1-4 (ESC-C1..C4, TR-0, DV-1, TDC-1, AT-1, IC-1..IC-4, TR-1) + the sync-docs pass. Branch restarted from main.
+  **Owner-side:** push dashboard + cdr-import and roll the dashboard deployment; `previewEscalationCommentGaps` then `backfillEscalationCommentGaps` (#88); `diagnoseTransferRetriesAllDates` and send the census (may move the 8 s decline line in both constants, #89); walk S69.
+  **Where I left off:** nothing open on the branch.
+- **2026-11-02 (5) -- Batch 4 IMPLEMENTED (block 259-batch4-tr1-broad-implement).** TR-1: Admin ▾ → Transfer retries (`TransferRetries.gs`, admin-only, read-only, Neon-only), owner chose "build now" (before the TR-0 numbers) and an Admin modal. The rule is cdr-import's TR-0 rule, mirrored and parity-pinned (`transfer-retries.test.js`). 2800 tests, bites 5/5. Committed + pushed; NO PR yet.
+  **Owner-side:** push dashboard + cdr-import; run TR-0 and send the census -- the 8 s decline line may move (both `TF_RETRY_QUICK_SECS_` and `TR_QUICK_SECS_`); the ESC-C2 preview/backfill; walk S69.
+  **Where I left off:** Batches 1-4 all on the branch, no PR (not asked).
+- **2026-11-02 (4) -- Batch 3 IMPLEMENTED (block 259-batch3-ic-broad-implement).** IC-1 (Callbacks explainer -> "How this is counted" ⓘ with bullets, list buttons side by side, sub-queue line into the tooltip), IC-2 (Direct lines chevron + ⓘ), IC-3 (brief rows slide open and shut), IC-4 (same ⓘ on the Overview). The gloss tooltip gained `data-gloss-src` (reads a hidden source at show time). 2795 tests, bites 5/5, ci:ui 799 green. Committed + pushed; NO PR yet.
+  **Next (was):** Batch 4 (TR-1) once the owner sends `diagnoseTransferRetriesAllDates` numbers. Owner-side from Batches 1-3: push dashboard + cdr-import; run the ESC-C2 preview then backfill; run TR-0.
+- **2026-11-02 (3) -- Batch 2 IMPLEMENTED (block 259-batch2-dv1-tdc1-broad-implement).** DV-1 (four-way switch: Inbound / Outbound / Inbound + outbound / Direct, admin-only; the Direct button keeps its own admin gate past the 6c release), TDC-1 (Team Direct Calls as a panel: loads with the page, skeleton, Retry, tally, rows open the Direct view; one fetch shared with the Direct view), AT-1 (table explainer -> ⓘ). 2791 tests, bites 5/5, ci:ui 791 green on the final commit. Batch 1 ci:ui re-run was green (778). Committed + pushed; NO PR yet.
+  **Next:** Batch 3 (IC-1 Callbacks ⓘ + side-by-side list buttons, IC-2 Direct lines arrow + ⓘ, IC-3 brief drawer animation both ways, IC-4 the same on the Overview), then Batch 4 (TR-1) after the TR-0 numbers.
+- **2026-11-02 (2) -- Batch 1 IMPLEMENTED (block 259-batch1-esc-tr0-broad-implement).** ESC-C1 (resolve-time comment into the thread), ESC-C2 (gap preview + backfill, #88), ESC-C3 (latest comments on the card), ESC-C4 (single linked-copy delete keeps its comments), TR-0 (`diagnoseTransferRetries`, #89). 2787 tests, bites 8/8. Committed + pushed with DEP-5; NO PR yet (not asked).
+  **Owner-side:** push dashboard + cdr-import; run `previewEscalationCommentGaps` then `backfillEscalationCommentGaps`; run `diagnoseTransferRetriesAllDates` and send the TOTAL + census lines (decides TR-1); check Transfer % on the CSR Agent Metrics table on the new deployment.
+  **Next:** Batch 2 (DV-1 four-way direction switch with Outbound-only + Direct, admin-only; TDC-1 Team Direct Calls card), then Batch 3 (TR-1) after the TR-0 numbers.
+- **2026-11-02 -- DEP-5 IMPLEMENTED (block 259-dep5-broad-implement).** The owner hit Apps Script's 200-version cap on a dashboard deploy. `scripts/check-version-limit.mjs`, run by deploy.sh before the gates and the push when it will roll a deployment: warn from 180, refuse at 200. 2774 tests, bites 5/5. Committed + pushed; NO PR yet (not asked).
+  **Owner-side:** delete old versions in Project History (keep the live one + last ~20), then redo the deploy.
+- **2026-10-30 (8) -- SHIPPED: [PR #399](https://github.com/robinchoudhuryums/call-data-reporting/pull/399) merged on green CI (merge 7cc99b0)** -- NX-2. Branch restarted from main.
+  **Owner-side:** push cdr-import; `backfillInboundCalls(from, to, true)` + `backfillOutboundCalls(from, to, true)` over the held dates; optional NX-0 re-run (the "only record of talk" group should shrink to a handful); the Active Dept Config rows for XB-1.
+  **Where I left off:** nothing open on the branch.
+- **2026-10-30 (7) -- NX-2 IMPLEMENTED (block 259-nx2-broad-implement).** `icIsCallerIncoming_` (Incoming AND not a recording leg) decides direction in both captures + the indexes; ~26 calls/day move from inbound to outbound. 2770 tests, bites 4/4. PR next, merge on green.
+  **Owner-side:** push cdr-import; re-run both backfills over the held dates; Dept Config rows for XB-1.
+- **2026-10-30 (6) -- ROOT CAUSE of the phantom inbound calls (owner's raw legs, 1783985220389).** An ordinary OUTBOUND call (Outgoing 107 Alan -> customer, connected 1 s) whose 8x8 CallRecording leg is marked **Incoming with the customer's number as caller**. Inbound capture (`incoming` filter, inboundCalls.js ~585) reads that as the customer calling in -> a 1-second "answered" inbound call; outbound capture's Gate 1 (outboundCalls.js ~115, "any Incoming leg") drops the call. Not click-to-dial: the owner's first sample was a 1 s outbound attempt then a redial. Proposed NX-2 (asked for go): one helper `icIsCallerIncoming_` (Incoming AND not a recording leg) used by inbound 517/585/1154/3457 and outbound 115/214/642; ~210 calls / 8 days move from inbound to outbound; not retroactive -- re-run the inbound + outbound backfills over the held dates.
+- **2026-10-30 (5) -- NX-0b + XB re-run results.** NX-0b over 214 "only record of talk" legs: 210 never went through a menu or queue (click-to-dial 53 = followed within 2 min by the same agent's outbound call; 157 not followed; 4 after a real inbound call). Talk: none 54, 1-5 s 144, 6-59 s 11, 60 s+ 5. So ~210 phantom-looking inbound calls (no menu, no queue, a 1-5 s agent leg to the caller), but the click-to-dial explanation covers only a quarter -- asked the owner for the raw legs of ringBackOnly sample 1783985220389 before writing NX-2. XB: no Dept Config parent rows yet (PAP / Spanish / PAK / MWC / BackUp_FieldOps still unplaced); bounces still 3 in 446; 188 of the 557 off-roster answer steps are those "(caller)" legs.
+- **2026-10-30 (4) -- SHIPPED: [PR #398](https://github.com/robinchoudhuryums/call-data-reporting/pull/398) merged on green CI (merge 36db81c)** -- NX-0b. Branch restarted from main.
+  **Owner-side:** push cdr-import, re-run `diagnoseOutsideNumberLegsAllDates`, send the `NX-0b TOTAL` line (decides NX-2); the PAP / Spanish / PAK Dept Config rows + bounce re-run (decides XB-1).
+  **Where I left off:** nothing open on the branch.
+- **2026-10-30 (3) -- NX-0b IMPLEMENTED.** The owner's sample 1783985223405 read as CLICK-TO-DIAL (a 1-second "inbound" call with no wait, then the same agent's 1:55 outbound call to that number 5 s later), not a callback. `diagnoseOutsideNumberLegs` now tests every "only record of talk" leg: click-to-dial / no outbound after / after a real inbound call, plus gap + talk buckets. 2767 tests, bites 4/4. Read-only; no PR yet.
+  **Owner-side:** push cdr-import, re-run `diagnoseOutsideNumberLegsAllDates`, send the `NX-0b TOTAL` line. If click-to-dial dominates, NX-2 = the capture leaves those phantom inbound calls out (like OBX-1) -- moves inbound counts ~2%, owner go needed.
+- **2026-10-30 (2) -- NX-0 results (8 dates, 8866 outside calls).** 284 outside-number legs, ALL Outgoing, all blank-named: duplicate of the agent's answer 12, warm-transfer carrier 16 (the artifacts, ~10%), the ONLY record of talk with the caller 214 (54 unanswered), a different outside number 42. 189 calls count as answered ONLY through such a leg, 182 take their final dept from it. Reading: mostly NOT an artifact -- most likely a callback to the caller filed under the original call (no answered Incoming leg at all); unconfirmed. Proposed NX-0b (gap between the caller's last leg and the outgoing leg + what happened to the caller before it) and asked the owner to eyeball sample 1783985223405; NX-2 (callback disposition / label, outbound-capture blind spot) waits on that.
+- **2026-10-30 -- SHIPPED: [PR #397](https://github.com/robinchoudhuryums/call-data-reporting/pull/397) merged on green CI (merge 7225c48)** -- NX-1 / NX-0 / HOH-1 / XB-0c. Branch restarted from main.
+  **Owner-side:** push cdr-import + dashboard; run `diagnoseOutsideNumberLegsAllDates` and send the log (decides NX-2); add the PAP / Spanish / PAK Dept Config rows (+ MWC alias on Sales, BackUp_FieldOps on FieldOps), re-run `diagnoseTransferBouncesAllDates` (decides XB-1); walk S38's HOH-1 / NX-1 steps.
+  **Where I left off:** nothing open on the branch; waiting on the owner items above.
+- **2026-10-29 (10) -- NX-1 / NX-0 / HOH-1 / XB-0c (block 259-nx-hoh1-xb0c-broad-implement).** "N." relabelled "(caller)" / "(external number)" at capture; `diagnoseOutsideNumberLegs` (#87) to settle whether those legs are 8x8 artifacts; hold-hangup wording ("Hung up while on hold with <agent>", path row marked, Inbound report + email); bounce pass folds sub-queues into their Overview Parent and ignores UDC/UUC/AfterHours. 2764 tests, cdr-import bites 9/9.
+  **Owner-side:** push cdr-import + dashboard; run `diagnoseOutsideNumberLegsAllDates` and send the log; add the PAP / Spanish / PAK Dept Config rows (+ MWC alias on Sales, BackUp_FieldOps on FieldOps) and re-run the bounce pass; walk S38's HOH-1 / NX-1 steps.
+  **Where I left off:** committed + pushed; NO PR yet.
+- **2026-10-29 (9) -- owner answers: "N." + PAP.** "N." is NOT the caller: it is an answered leg to an OUTSIDE number whose name cell was N/A -- icBuildJourney_ runs the IMP-12 initials mask (cdrMaskExternalName_) BEFORE its N/A check, so "N/A" became "N.". Proposed fix (not built): N/A check first, then label "Caller (called back)" when the number is the caller's own, else "Outside number". PAP: owner wants it viewable alone but part of Sales -- matches the dashboard already (own dept + Overview Parent edge); for XB-1, Sales<->PAP is no move and bounces roll up to the parent with the sub-queue named. Proposed: Dept Config rows for PAP / Spanish / PAK (+ FieldOps for A_Q_BackUp_FieldOps) equal to the seeds so cdr-import can read queue + parent; UDC/UUC (sister brands) + A_Q_AfterHours treated as entry queues. Asked: A_Q_Sales_MWC owner, HOH-1 go, the plan go.
+- **2026-10-29 (8) -- HOH-0b / XB-0b re-run results (8 dates, 8866 outside calls).** HOH: 149 flagged, all answered, ALL on the call's last leg, none naming a Transfer To call, no col P links at all -- the flag never marks a transfer; it is a caller hanging up while held by the LAST agent, after being answered. So HOH-1 is a LABEL question (the chip reads like an abandon on an answered call), not a count change; proposed to the owner, not built. XB: two-roster placement worked (743 placed, 38 left); 446 moves, still 3 bounces (~0.7%); 687 calls still skip a step -- 8 unplaced queues and off-roster answerers (top: "N." 222, Sunil Kurian 91, Alana (Anjali) Manral 32). Asked the owner: queue owners, who "N." is, whether the off-roster answerers belong on a roster (their calls may be missing from every My Department table), and the XB-1 scope.
+  **Where I left off:** nothing to build until the owner answers; branch pushed, NO PR.
+- **2026-10-29 (7) -- HOH-0b + XB-0b (block 259-hoh0b-xb0b-broad-implement).** The owner's first runs: HOH-0 read 135/135 flags `final` (void: a warm transfer continues under the col P call, outside the Parent-Call-ID group -- now followed, 3 hops, hand-over legs to the caller only); XB-0 found 3 bounces in 338 moves with 676 two-roster steps skipped (a floor -- two-roster answerers now placed by the ringing queue, else the current dept). 2753 tests, bites 6/6.
+  **Owner-side:** push cdr-import, re-run both, send logs; map or name the 8 "queues not placed" (PAP / Spanish / PAK have no Dept Config rows of their own).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-29 (6) -- SHIPPED: [PR #395](https://github.com/robinchoudhuryums/call-data-reporting/pull/395) merged on green CI (test / lint / ui-harness), merge 123f81b.** Branch restarted from main. Carries everything from the 10-28/29 owner rounds (QF-1..3, HOH-0, XB-0, CB-R1/R2, DL-R1/R2, SB-*, LB-2, BR-1..4, QV-1..4, the /sync-docs pass).
+  **Owner-side:** deploy the dashboard (`clasp push -f` uploads the new DayQuickView.gs + a new deployment version) and cdr-import (the two diagnostics); walk S61, S62, S48, S60, S57; run `diagnoseHoldHangupsAllDates` / `diagnoseTransferBouncesAllDates` and send the logs + the two XB answers; decide the day bars + quick view release; read `meta.partMs` on a cold open.
+  **Where I left off:** nothing open on the branch; waiting on the owner items above.
+- **2026-10-29 (5) -- /sync-docs over the 54 commits since 7f322b6.** Drift was small (each round updated its own docs): CLAUDE.md "~130 suites" -> "~160"; the KDD CacheService-tiers bullet (59 B under its 4 KB cap) trimmed to one roster-hash sentence pinned by cache-key.test.js (every code kept); docs/architecture.md gained DayQuickView.gs + the getDayQuickView row; docs/next-steps.md gained rows for exception days, the outbound / direct / journey attribution round and the 10-28/29 owner rounds. Subsystems clean; no undocumented operator state. CLAUDE.md 176.6 KB of 200 KB.
+- **2026-10-29 (4) -- QV-4 IMPLEMENTED (addendum in block 259-qv2-broad-implement).** A week / month day bar opens the quick view on its first workday; the arrows then step by day (`strip.__dts.qv`). Bites 3/3. Then /sync-docs.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-29 (3) -- QV-3 IMPLEMENTED (addendum in block 259-qv2-broad-implement).** The day quick view's loading states: skeletons shaped like the table / chart / agent day on a fresh open (no height jump), frost relabelled for the day on screen when stepping, none for a prefetched day. Bites 4/4.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet. Still pending from the owner: the HOH-0 / XB-0 logs, the PR go-ahead, the day bars + quick view release decision.
+- **2026-10-29 (2) -- QV-2 IMPLEMENTED (block 259-qv2-broad-implement).** The day quick view's reads are ONE request (`getDayQuickView`, DayQuickView.gs, wrapping the three endpoints in one execution): opening a day = 2 requests (the day, then both neighbours), each step = 1. Inner usage rows suppressed for one `dayView` row, none for a prefetch. 2746 tests, ci:ui EXIT 0, bites 7/7. NET 1 - 0 = 1.
+  **Owner-side:** deploy (new server file); after it, read `meta.partMs` on a cold open (the parts now run in sequence).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-29 -- QV-1 + BR-4 IMPLEMENTED (block 259-qv1-br4-broad-implement).** BR-4: the brief's Agents + Team detail are one Team row (agents verdict · talk time per call; opens the cards then the team detail). QV-1: a click on a day bar opens that day's quick view (cards for the day beside the range, a condensed agent table -- outbound behind obAllowed_ -- the day's missed calls, workday arrows, "Open this day on the page"); admin-only, released with the day bars. 2739 tests, ci:ui EXIT 0, bites 6/6 (5 unit + 1 UI). NET 0 - 0 = 0.
+  **Owner-side:** deploy the dashboard; walk S61 (Team row) + S62 (quick view).
+  **QV-1b (same day):** neighbour prefetch -- the workday either side loads once the open day lands; the pop-up's outbound days in their own store. Bites 4/4. **Built as QV-2** (see above).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end"). Still waiting: the HOH-0 / XB-0 diagnostic logs.
+- **2026-10-28 (6) -- BR-1/2/3 (owner testing notes).** The brief frosts "Loading <dept>…" on a dept switch / re-run; managers (team-average excluded) never quoted in Team detail; Queue health 1-3 violation days = lighter green (`fade`), 4+ amber. Bites 4/4.
+  **Decided 2026-10-29:** merge the rows (BR-4); a day bar opens a day quick view (QV-1).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet.
+- **2026-10-28 (5) -- LB-2 IMPLEMENTED (block 259-lb2-broad-implement).** The combined agent table is one line per agent: an inbound bar + an outbound bar (with the rang out / brief / not recorded split), each on its own scale, per-day under the counts, chips on the two rates, count changes in the hover (owner Option B). NET 0 - 0 = 0.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
+- **2026-10-28 (4) -- SB-1/2/3/5/6 IMPLEMENTED (block 259-sb-broad-implement).** Split bars wherever counts add up exactly to one total: Agent Day outbound, Direct Calls (+ card), outbound Placed (summary, Team Outbound, Overview tile line), the Inbound report (its hidden "missed" now shown; admin-only), the CSR Transfer detail (sorted by transfers). NET 2 - 0 = 2.
+  **SB-5e:** the Inbound report email fixed the same way (owner). **SB-4 Queue calls SKIPPED** by the owner after the real before / after (the Queue report already has the bars; on My Department it repeats the Abandoned % card).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner: "PR at the end").
+- **2026-10-28 (3) -- CB-R1 / CB-R2 / DL-R1 / DL-R2 IMPLEMENTED (block 259-cb-dl-broad-implement).** Owner #5 + #6 from the approved mock: Callbacks by department and Direct lines lead with the callers nobody called back, one bar per base that adds up, a department table (most unreturned first) with drills -- per department (callbacks) and per person (direct lines, the line tried first). After-hours direct callback time is counted from the next work open (`outboundDirect:v4`). Still ADMIN-ONLY; owner: release to managers for their own department after vetting. NET 2 - 0 = 2.
+  **Owner-side:** deploy the dashboard; walk S48 + S60.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (stacked on QF + HOH-0/XB-0); NO PR yet -- owner: "do a PR at the end". Next: HOH-1 / XB-1 once the diagnostic logs arrive.
+- **2026-10-28 (2) -- HOH-0 + XB-0 IMPLEMENTED (block 259-diag-hoh0-xb0-broad-implement).** Read-only diagnostics: `diagnoseHoldHangupsAllDates()` (#85: is a hung-up-on-hold flag a hang-up or a transfer side effect?) and `diagnoseTransferBouncesAllDates()` (#86: calls that came back to the first department, by trio and first sender). Plus the global `.btn-ghost` (owner asked). NET 1 - 0 = 1.
+  **Owner-side:** deploy cdr-import + the dashboard; run both diagnostics and send the logs; map any "queues not placed" in Dept Config.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn with QF-1..3; NO PR yet (owner to say). Next in the agreed order: the #5 + #6 callbacks design mock.
+- **2026-10-28 -- QF-1..3 IMPLEMENTED (block 259-qf-broad-implement).** Owner screenshot round, the quick fixes: a queue listed before its same-second first ring (capture + both display shapers); the escalation card's one action row with hover labels (`.btn-ghost` had no rule); the agent panel framed as a tray of its row. NET 3 - 1 = 2.
+  **Owner plan (2026-10-28, order agreed):** (1) these quick fixes; (2) read-only diagnostics for #1 ("hung up on hold" set on a transferring agent's leg) and #3 (misrouted transfers that bounce back, e.g. Sales -> CSR -> Sales); (3) a design mock for #5 + #6 (Callbacks by department + Direct Lines: one summing bar, "not called back" as the headline, a dept -> person table with a caller drill; after-hours callbacks timed from the next work day); (4) #1(b) count only a final-leg hang-up + mark it on the row, #3(b,c) a stored bounce record + report.
+  **Open / owner to decide:** #3 -- a consult that ends with the original agent is not a bounce?; a two-roster agent skipped?; #6 -- may managers see the per-person rows?
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner to say).
+- **2026-10-27 (3) -- OXT-1 IMPLEMENTED (block 259-oxt1-broad-implement).** The outbound counterpart of IXT-1: the Transfer To continuation (consult + hand-over) and internal dials while CONNECTED to the outside party, journey-only; both captures now check across each other (an agent on an inbound AND an outbound call at once gets neither; a target named by one call of each is claimed by neither). `diagnosePersonTransfers` covers both directions + time since connect. Outbound readers (Agent Day To label, call-mix colleague, ring probes) skip the added events. 2709 tests, 14/14 bites. NET 1 - 1 = 0.
+  **Owner-side:** deploy cdr-import AND the dashboard; `diagnosePersonTransfers('all')` (send the outbound lines, esp. the 30m+ bucket); `backfillOutboundCalls(from, to, true)` + Outbound Calls export; walk S38's OXT-1 step.
+  **Open / owner to decide:** whether outbound timing attempts need a time-since-connect cap, from the diagnostic. team-tools link (rep + time + phone hash) -- other repo.
+  **Where I left off:** PR #391 (DCA-1 + IXT-1) MERGED 2026-10-27; branch restarted from main; SHIPPED as [PR #392](https://github.com/robinchoudhuryums/call-data-reporting/pull/392), merged 2026-10-27. Next: the team-tools link, in a combined session (owner: managers only; 5 min window, 15 with a phone match; show every fitting call marked unsure; planning first).
+- **2026-10-27 (2) -- IXT-1 IMPLEMENTED (block 259-ixt1-broad-implement).** Caller Lookup stopped at the agent who answered when they transferred / consulted a colleague. The capture now appends, journey-only (transfer:true), the Transfer To target (consult + the colleague taking the caller) and every internal dial from the answering agent while live (keyed on the caller, any callee); recording legs left the journey; `diagnosePersonTransfers` (#84). 2699 tests, 10/11 bites. NET 1 - 1 = 0.
+  **Owner-side:** deploy cdr-import AND the dashboard; `backfillInboundCalls(from, to, true)` + Inbound Calls export; run `diagnosePersonTransfers('all')`; walk S38's IXT-1 step on 1783985478661.
+  **Where I left off:** SHIPPED with DCA-1 in [PR #391](https://github.com/robinchoudhuryums/call-data-reporting/pull/391), merged 2026-10-27 (+ the Agent Day "moved on" fix).
+- **2026-10-27 -- DCA-1 IMPLEMENTED (block 259-dca1-broad-implement).** The Direct Call Report credited direct calls by EXTENSION only, so a former employee (kept on DO NOT EDIT! for long-term data) got the calls of whoever 8x8 gave their extension to. The build now credits by extension AND the leg's own name (canonicalized): somebody else -> no one; a blank / non-person name keeps the extension rule until the owner decides from `diagnoseDirectCallAttribution` (Operator State #83). 2689 tests, 8/8 bites. NET 1 - 1 = 0.
+  **Owner-side:** deploy cdr-import; run `diagnoseDirectCallAttribution('all')` and send the log; alias any current employee listed under "somebody else"; rebuild held dates / re-import older ones.
+  **Open / owner to decide:** the blank-name rule; step 2 (CDR Historical per-agent build, same flaw).
+  **Where I left off:** SHIPPED in [PR #391](https://github.com/robinchoudhuryums/call-data-reporting/pull/391), merged 2026-10-27.
+- **2026-10-26 (2) -- OBX-2 IMPLEMENTED (block 259-obx2-broad-implement).** After OBX-1's deploy the owner checked the "other" number-live-only samples: two departments calling the same insurer / facility, one on hold -- genuine. `diagnoseOutboundTransfers` now names that case "colleague on the same number" and flags insurer lines (Neon `insurance_numbers` hash join, OFF with a reason when unavailable); #82 records that the number-live test must never become a capture rule. 2680 tests, 5/5 bites. NET 0 - 0 = 0.
+  **Owner-side:** deploy cdr-import (diagnostic only); optionally re-run `diagnoseOutboundTransfersAllDates()`. OBX-1's backfill is DONE (owner, 2026-10-26).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (restarted from main after PR #387); NO PR yet (owner to say).
+- **2026-10-26 -- OBX-1 IMPLEMENTED (block 259-obx1-broad-implement).** The outbound capture leaves out a call another call names in "Transfer To Call ID" (a warm-transfer continuation, the receiving rep's leg to the customer); `diagnoseOutboundTransfers` now sorts the number-live-only calls into untracked hand-over / redial / duplicate dial / crossing call / other, in whole numbers. 2676 tests, 7/7 bites. NET 1 - 0 = 1.
+  **Owner-side:** deploy cdr-import; `backfillOutboundCalls(from, to, true)` over the held dates; re-run `diagnoseOutboundTransfersAllDates()` and report the B-only kinds.
+  **Open / owner to decide:** a second rule for the untracked hand-over shape, from the diagnostic.
+  **Where I left off:** SHIPPED as [PR #387](https://github.com/robinchoudhuryums/call-data-reporting/pull/387), merged 2026-10-26; owner deployed, backfilled and re-ran the diagnostic (-> OBX-2).
+- **2026-10-22 -- Exception days phase 1 + the Transfer % column IMPLEMENTED (block 259-exception-days-broad-implement).** An admin-managed `Exception Days` sheet (Admin ▾ → Exception days, INV-01 carve-out); the day is left out of every windowed figure (counts as well as rates) through ONE DQE step beside the queue split (cross-file-pinned) and `readQcdGrid_`'s filter. Every report names it, the day bars stripe it off the scale, the Overview trend bridges it under a hatch, and admins get an include switch. Comparison windows, per-workday averages, alerts, alert reasons and coaching treat it as a non-working day, on the server and in the client mirror. The CSR Transfer % column (28de416..e6b2de3) also went through the broad-implement steps. 2665 tests, 12 bites, ci:ui 703/703. NET 0 - 1 = -1 (until phase 2, the per-call reports and team-tools still count the day).
+  **Owner-side:** deploy the dashboard; re-run `setup()`; add 09/21/26 "8x8 outage"; walk S68 and S44.
+  **Open / owner to confirm:** the hollow trend point was built as a hatched band; phase 2 (per-call reports, team-tools #68, anomaly suggestions).
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner to say).
+- **2026-10-21 (3) -- Direct D2 + the Step 3 trim IMPLEMENTED (block 259-d2-cleanup).** D2: coworker dials logged Internal credited to the caller (internal outbound), every roster extension (first beats later), one event per root call (talk per leg), anonymous inbound rings kept, extension-length callees internal, an outside call keeping its side through an internal transfer. The unreachable Outbound-only table (obViewRender_ branches, two data-dir="out" rules, apTbody_'s 'out') removed after verifying it could not run. 2640 tests, 12 bites, ci:ui green. NET 1 - 1 = 0.
+  **Owner-side:** deploy cdr-import AND the dashboard; D2 is NOT retroactive -- run `diagnoseDirectCallCounting` (#80) on a few days, then re-import the dates the Direct report is read over (#56); check the roster for shared-line extensions listed on an agent's cell; walk S67's D2 step.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn (with the rest of 2026-10-21's work); NO PR yet (owner to say).
+- **2026-10-21 (2) -- Owner round IMPLEMENTED (block 259-owner-1021).** Direct D1 (the report clamps to the last imported day + corrects the End date, names missing workdays, withholds vs-prior chips on a gap, shows int / ext on every count; `directCall:v5`), D0 (`diagnoseDirectCallCounting`, Operator State #80), D3 (Team Direct Calls side card), the day-bar target line (option 2), agent table layout B, `probeOutboundCallMix` (#79). 2633 tests, 22 bites, ci:ui green. NET 1 - 1 = 0 (D1's extra round trip is the new failure mode).
+  **Owner-side:** deploy the dashboard AND cdr-import; walk S57, S62, S67; run `diagnoseDirectCallCounting` on 3-4 days and report the shares (D2 is scoped from them); optionally run `probeOutboundCallMix`.
+  **Waiting on the owner:** D2 (the Direct capture fixes -- re-import per fix), a ruling if the outbound mix shows internal traffic.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn with the earlier 2026-10-21 commits; NO PR yet (owner to say).
+- **2026-10-21 -- BRF-1 / BRF-2 / ICON-1 / QD-3b fixed; APN-1 / APN-2 built (block 259-brief-exports-panel).** The admin brief no longer freezes with the bottom Insights region collapsed (`insReportLive_`); Insights Copy image + Print include the brief's sections; the side panels' ⓘ shows once; the agent panel slides; admins see each outbound call's id + copy + outbound path (Outbound tab and Agent Day cards); the QD-3 amber check no longer depends on the run date (it was red on main). 2615 tests, 11/11 bites, ci:ui green.
+  **Owner-side:** deploy the dashboard; walk S56, S61.
+  **Awaiting owner:** Direct Calls Report plan (D0 probe / D1 dashboard guard + int-ext / D2 capture fixes / D3 My Department) -- audit in the block's follow-ons; the outbound classification probe; table layout B or C (mocks: https://claude.ai/artifact/PJvnqUpQJ2tmZ1Z89pZJax); the day-bar target line.
+  **Where I left off:** committed + pushed on claude/exciting-goodall-7tkygn; NO PR yet (owner to say).
+- **2026-10-20 -- QD-1 / QD-2 / QD-3 IMPLEMENTED (block 259-queue-figures), shipping in ONE PR with IDLE-2.** My Department Queue calls + Abandoned % gain vs-prior chips; the Overview abandoned chips + sub-queue Abd follow the card Window (were the latest QCD day; `companyOverview:v29`), with tooltips; "viol MTD" is 0 green / 1-3 amber (--caution) / 4+ red.
+  **Owner-side:** deploy the dashboard; walk S66.
+  **Where I left off:** SHIPPED as [PR #381](https://github.com/robinchoudhuryums/call-data-reporting/pull/381), merged 2026-10-20 (93f5456).
+- **2026-10-20 -- IDLE-2 IMPLEMENTED (block 259-idle-insights): Insights drops zero-call agents on a whole-dept run.** Its agent-free run carded every roster agent; one active only in the prior window showed 0 / 0 / 0 "Slipping" (with the split on, the crossover case). computeInsights_ opts.dropIdle (screen + email, agent-free only; explicit picks keep their card); `insights:v26`. 2610 tests, 5/5 bites.
+  **Owner-side:** deploy the dashboard.
+  **Where I left off:** SHIPPED in [PR #381](https://github.com/robinchoudhuryums/call-data-reporting/pull/381).
+- **2026-10-20 -- /sync-docs after IDLE-1.** Recorded that `QUEUE_SPLIT_SCOPE=dept` is the PRODUCTION state (Operator State #42 + its CLAUDE.md index line); the E3 diagnostics chip now counts no-call crossover agents (client-ui-conventions); the ci:ui per-driver list moved out of CLAUDE.md into tools/ui-harness/README.md (which gained drive-journey / -agentpanel / -daybars / -notify / the agent pair, and lost the stale Inbound|Outbound|Both wording). CLAUDE.md 182.1 -> 178.0 KB.
+  **Follow-on resolved:** confirmed and fixed as IDLE-2 (below).
+  **Where I left off:** SHIPPED as [PR #380](https://github.com/robinchoudhuryums/call-data-reporting/pull/380), merged 2026-10-20.
+- **2026-10-20 -- IDLE-1 IMPLEMENTED (block 259-idle-rows): zero-call agents get no My Department row.** From a Power screenshot: an agent whose window rows are all zero (the build's out-of-window rows, or a queue-split crossover narrowed to zero) drew a 0 / 0 (0) row with an empty gray bar. getDepartmentSummary now passes `dropIdle` (other consumers unchanged), the agents land in rosterWithNoData, the bar cell draws a dash for any zero row; `summary:v24`. 2608 tests, 5/6 bites (1 subs-scope only).
+  **Owner-side:** deploy the dashboard.
+  **Where I left off:** SHIPPED as [PR #379](https://github.com/robinchoudhuryums/call-data-reporting/pull/379), merged 2026-10-20. Owner confirmed `QUEUE_SPLIT_SCOPE=dept` is on in production on purpose (the block's follow-on is answered).
+- **2026-10-19 -- Nothing unmerged.** The owner plan (Steps 1-5) and its docs sync are all on main (PRs #371-#377). Owner-side: deploy the dashboard (`scripts/deploy.sh .`), walk S63-S65, and decide each manager release (#77 manager layer, #48 coaching email, #78 alert reasons). Still open: F35 (operator clasp check), F62 (owner ruling), the optional ci:ui stage-list move out of CLAUDE.md.
+- **2026-10-16 -- /sync-docs over the owner-plan commits (Steps 1-5, PRs #371-#376).** Drift was small because each step updated its own docs: the Threshold-drift bullet and README still described the retired alert config TABLE (now rule cards); the public-write bullet did not name the one non-admin write (the Step 5 manager layer, a Script Property); docs/architecture.md lacked Notifications.gs / AlertReasons.gs and the new Coaching RPCs; next-steps had no row for the owner plan; client-ui-conventions had no Notifications bullet. Subsystems clean (Notifications.gs + AlertReasons.gs listed; every path exists). No undocumented operator state (#77 / #78 / #48 cover the three new properties). Weight: CLAUDE.md 182.1 KB of 200 KB (88.9%); largest bullet 3.9 KB; nothing pruned.
+  **Next (weight):** the ~6 KB ci:ui stage list in Key commands could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
+  **Where I left off:** SHIPPED as [PR #377](https://github.com/robinchoudhuryums/call-data-reporting/pull/377), merged 2026-10-16.
+- **2026-10-16 -- Owner plan Step 5c IMPLEMENTED (block 259-step5c): two admin-trial alert reasons.** An agent below X% on each of N workdays; callers not called back within a business day (callback engine, business-day window, unloaded days skipped). Admins-only email, `reason:` Alert Log rows, Preview rows. 2604 tests, 8/9 bites (1 equivalent), drive-notify 29/29. **Step 5 (and the owner plan) is now fully implemented.**
+  **Owner-side:** deploy the dashboard; try the reasons (Operator State #78, S65); release decisions for the manager layer (#77), coaching (#48) and the reasons remain the owner's.
+  **Where I left off:** SHIPPED with 5b as [PR #376](https://github.com/robinchoudhuryums/call-data-reporting/pull/376), merged 2026-10-16.
+- **2026-10-16 -- Owner plan Step 5b IMPLEMENTED (block 259-step5b): coaching release prep (admin trial).** Per-dept coaching gates (COACHING_DEPT_RULES) with the stricter-only manager clamp, Met / Rotated / Dismissed closes, and the manager email HELD for admins (coachingManagerRecipients_ is the release seam). 2594 tests, 7/7 bites, drive-notify 26/26.
+  **Owner-side:** deploy the dashboard.
+  **Next:** 5c (two new alert reasons, admin-only).
+  **Where I left off:** SHIPPED with 5c as [PR #376](https://github.com/robinchoudhuryums/call-data-reporting/pull/376), merged 2026-10-16.
+- **2026-10-16 -- Owner plan Step 5a IMPLEMENTED (block 259-step5a): the Notifications page (admin trial).** Sentence rules, would-it-have-fired History, test send to the admin only, and the stricter-only MANAGER LAYER built but off (NOTIFY_MANAGER_EDIT, Operator State #77). 2587 tests, 8/8 bites, drive-notify 18/18.
+  **Owner-side:** deploy the dashboard. Release the manager layer only after walking S63.
+  **Next:** 5b coaching release prep (per-dept gates + the same clamp, Met / Rotated / Dismissed, manager email still to admins only), then 5c (two new alert reasons).
+  **Where I left off:** SHIPPED as [PR #375](https://github.com/robinchoudhuryums/call-data-reporting/pull/375), merged 2026-10-16.
+- **2026-10-16 -- Owner plan Step 4 SHIPPED ([PR #374](https://github.com/robinchoudhuryums/call-data-reporting/pull/374), merged).**
+- **2026-10-16 -- Owner plan Step 4 IMPLEMENTED (block 259-step4): linked day bars in the My Department team cards (admin trial).** Owner ruling mid-step: extend the dept payload (totals.daily + qcd.range.daily, compact tuples, no new call) so the bars add up to the cards, incl. the combined view and Avg answer. 2572 tests pass, 9/9 bites, drive-daybars 20/20.
+  **Owner-side:** deploy the dashboard.
+  **Next:** Step 5 (9a/9b notifications page, 10 coaching release prep, 9c alert reasons; all admin-only; stricter-only manager thresholds).
+  **Where I left off:** SHIPPED as [PR #374](https://github.com/robinchoudhuryums/call-data-reporting/pull/374), merged.
+- **2026-10-16 -- Owner plan Step 3 SHIPPED ([PR #373](https://github.com/robinchoudhuryums/call-data-reporting/pull/373), merged).**
+- **2026-10-16 -- Owner plan Step 3 IMPLEMENTED (block 259-step3): brief accordion under the team cards, inbound + outbound together (one "Show outbound columns" toggle), preloading (Callbacks / Direct lines background, agent panel on hover).** Client-only, all admin-only; 2561 tests pass, 14/14 bites land, ci:ui green.
+  **Owner-side:** deploy the dashboard.
+  **Next:** Step 4 (day bars option B) and Step 5 (9a/9b notifications, 10 coaching release prep, 9c alert reasons; admin-only; stricter-only manager thresholds) await the owner.
+  **Where I left off:** shipped as PR #373.
+- **2026-10-16 -- Owner plan Step 2 SHIPPED ([PR #372](https://github.com/robinchoudhuryums/call-data-reporting/pull/372), merged): Overview manager default highlight (Company line released by allowlist) + agent panel From / To labels and callback cue (block 259-step2).**
+- **2026-10-16 -- Owner plan Step 1 IMPLEMENTED (block 259-step1): agent-panel days oldest-first, brief tier icons, partial trend month on count charts (option A).** Client-only; 2538 tests pass, ci:ui 554/0, 5/5 unit bites + 1 rendered bite land.
+  **Owner plan (agreed 2026-10-16, full text in the session):** Step 2 = 6 Overview trend default highlight (Company + own dept for a single-dept manager, Company only for ALL managers, admins unchanged, no axis zoom on the default) + 1b agent-panel caller/callee LABELS only (staff name / insurer / "Outside caller|number") + the "callback to HH:MM inbound" link. Step 3 = brief accordion under the team cards (collapsed, opens in place) + inbound/outbound together by default (admin-only; Outbound + Callbacks as their own rows; the 3-way switch becomes a Columns option) + preloading (background Callbacks/Direct, agent panel on hover/focus). Step 4 = day bars option B (linked highlight across the four cards, per-card value line, weekly past ~31 workdays). Step 5 = Notifications page (9a/9b), coaching release prep (10), two alert reasons (9c: agent below threshold over N workdays; callers not called back within a day) -- ALL admin-only until the owner tests; managers may only set STRICTER thresholds than the admin's, enforced server-side, stricter of the two wins.
+  **Owner-side:** deploy the dashboard.
+  **Where I left off:** SHIPPED as [PR #371](https://github.com/robinchoudhuryums/call-data-reporting/pull/371), merged.
+- **2026-10-15 -- /sync-docs over the 22 commits since 2005240 (UX-2, sync-commands, cycle 259 Batches 1-10 + E1-E5).** Drift was small because each batch updated its own docs: three CLAUDE.md index lines lagged their full items -- Operator State #2 (now names the G4 `deploy-currency` row), #56 (now leads with CDR Tools -> Make a date whole, G1) and the Health bullet's row list (`build-stamp` / `deploy-currency` #2). Subsystem lists clean (no new app files; every listed path exists). No undocumented operator state (`AGENT_WELCOME_PENDING` is engine state, registered and described in #46). Weight: CLAUDE.md 179.6 KB of 200 KB (87.7%, under the 90% warn); largest bullet 3.9 KB (the comma-joined cells one, all rule); nothing pruned. 2527 tests pass.
+  **Next (weight):** the next real saving is the ~5 KB ci:ui stage list in Key commands, which could move to tools/ui-harness/README.md with a one-line pointer -- not done here.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E5 IMPLEMENTED (block 259): manager-release readiness. The cycle-259 plan is now complete except F35 (operator check) and F62 (owner ruling).** ST4 tools/ui-harness/drive-crossstate.js is a new BLOCKING ci:ui stage walking the sequences before the UX-2 / 6c gates open (dept switch with the brief, dept switch in Outbound, the Callbacks row, View-as in/out, the Callbacks jump); the Insights mock now routes by dept with real CSR + Sales captures. It found one bug, fixed with owner approval: leaving View-as on the same dept left the admin's brief without its Callbacks row (applyViewAs_ now re-renders the brief, the F21 pattern). 2528 tests, ci:ui all stages green (18/18 new), rendered + unit bites land.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** F35 after the operator clasp check; F62 deferred; when UX-2 / 6c release to managers, extend drive-crossstate with the manager walk.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E4 IMPLEMENTED (block 259): mirror discipline (new capability).** ST2, NARROW by owner ruling (no stored figure changes): rawGridDay_ / rawGridDayIso_ is the one "which day is this grid, which legs are strays" rule (majority date) -- PIPE-3, the CSR engine + repair, diagnoseQcdVsDqe, queueSplitSample and (a guarded cdr-report copy) the overlap audit all use it; CDR / QCD / Q Path keep counting carry-over legs. ST5: tests/harness/parityDay.js is one shared day that drives the build (both copies), the drill, the split sample and the overlap audit, which must agree. 2527 tests, 10/10 bites + the guard bitten by hand, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy cdr-import and cdr-report. No operator steps.
+  **Decision recorded:** ST2 "Full" (filter carry-over legs at the import, changing stored CDR / QCD / Q Path) was declined -- revisit only on purpose.
+  **Next:** E5 (ST4 cross-state drivers) -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E3 IMPLEMENTED (block 259): recovery + deploy visibility (new capability).** G1 CDR Tools -> Make a date whole… (cdr-import): a per-date ledger (Call_Legs tab, six history sheets, six Neon tables), only what is owed via the existing paths (non-force import with the new ignoreLastSheets opt-in for missing core sheets; the PIPE-7 / F7 catch-ups), before/after report, un-parks a date that ends whole; never deletes. G4 every deploy.sh stamp carries `trees d=.. i=.. r=..`; the Health page's deploy-currency row treats the newest deploy as HEAD and warns for a project running older code. 2518 tests, 12/12 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy all three projects with scripts/deploy.sh once (the row stays muted until each has a G4 stamp). Use Make a date whole for a date missing something (Operator State #56).
+  **Next:** E4 (ST2 stray-leg filter + ST5 shared parity fixture), E5 (ST4 cross-state drivers) -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E2 IMPLEMENTED (block 259): systemic gate + anchor rules (new capability).** ST3 parityGate_ (Util.gs) is the one verdict every key-by-key flip gate reaches (DQE, QCD, the three config compares) -- duplicates, `compared` = keys on both sides, empty = INCONCLUSIVE; a sweep fails a new compare*Sources gate that skips it. ST1 cache-version-sync's QUEUE_SPECS: every cache in a file that reads queue data is classified, an embedding one needs the ':q' anchor AND the qcdSnapshotReadFailed_ put skip, and each QCD reader must flag its degraded exits. No production behaviour changed apart from the gates' `compared` meaning. 2510 tests, 15/15 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy the dashboard whenever convenient (gate-only). No operator steps.
+  **Next:** E3 (G1 make-date-whole + G4 build-stamp row), E4, E5 -- optional; F35 waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Expansion E1 IMPLEMENTED (block 259): go-live readiness (new capability).** G3 agent rows staged while agent sign-in is off wait on a pending-welcome list (AGENT_WELCOME_PENDING); the Access modal lists them and, once AGENT_ROLE_ENABLED is on, "Send N welcomes" sends them in one click (or clears the list). G2 Alerts ▸ Display standards lists the depts on the company default target, and the Insights brief labels a dept judged against it ("Default 80% target"). 2501 tests, 11/12 bites (1 equivalent mutant), lint + INV-16 + module-deps clean, ci:ui all stages green (+3 rendered checks).
+  **Owner-side:** deploy the dashboard. When you flip AGENT_ROLE_ENABLED, reopen Admin ▸ Access and press Send welcomes (Operator State #46).
+  **Next:** E2 (ST3 compare-gate helper + ST1 queue-anchor sweep), E3 (G1 make-date-whole + G4 build-stamp row, part done by F40), E4, E5 -- all optional; F35 still waits on the operator clasp check; F62 deferred.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 10 IMPLEMENTED (block 259): deploy / docs / tooling. The cycle-259 batch plan is now complete except F35 and F62.** F41 deploy.sh "dirty" is scoped to the project's clasp rootDir; F40 the INV-16 pair's hash rides the sibling build stamps (deploy-time warning + Health `inv16-skew` row); F38 lint:gas allows an advanced service only when the manifest enables it; F39 the harness resets every *MEMO* per h.call (h.inExecution shares one); F36/F37/F6/F14/F53 doc drift + dead code (ovWireTablePeriodBar_, two numCols). 2494 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard (cdr-report push optional, comment-only). Use scripts/deploy.sh for cdr-import + cdr-report so the inv16-skew row fills in.
+  **BLOCKED:** F35 needs the operator check (throwaway file: push, delete locally, push, run check-remote-orphans, look in the web editor) before the INV-17 text is rewritten.
+  **Next:** F35 after that check; F62 deferred (owner ruling); Expansion E1-E5 optional.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 9 IMPLEMENTED (block 259): verification mirrors.** F11 the DQE drill reconciles with the build on col E and AD/AE/AF (parity suite now drives them); F12 a queue-sentinel drill explains itself; F13 the overlap audit reads only the build's date (P-7) and canonicalizes names via the build; F59 queueSplitSample dates like the build so one stray no longer disables its self-check; F60 the QCD-vs-DQE diagnostic dates Raw Data by majority; F63 a reordered CSR history header is refused (daily / bulk / repair) instead of mislabeling counts; F64 the daily CSR engine reads the same day-only grid as the repair. 2489 tests, 11/11 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** push cdr-report and cdr-import. No operator steps.
+  **Next:** Batch 10 (deploy / docs / tooling: F35 operator check first, F41, F40, F38, F39, F36/F37/F6/F14/F53). F62 stays deferred (owner ruling).
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 8 IMPLEMENTED (block 259): per-call edges before 6c.** F30 a trailing attempt opens a hidden episode, so per-day callback OUTCOMES add up to the week; F31 the Outbound email leads with the unmapped / sheet-fallback / lagging caveats (obMarkUnmapped_ now on both paths); F32 the PC-3 callback entitlement requires the abandon before the dial to the second; F34 Caller Lookup says inbound is unavailable when the Inbound Calls tab is missing. 2480 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard. No operator steps. Expect small shifts in one-day / prior-window callback outcomes (F30, intended).
+  **Next:** Batch 9 (mirrors: F11, F12, F13, F59, F60, F63, F64), then Batch 10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-15 -- Broad scan cycle 259 Batch 7 IMPLEMENTED (block 259): interface / a11y, + F65/F66 (owner moved Batch 6's two follow-ons here).** F26 dark-mode --ink-muted re-declared; F27 the agent row's control is a name-cell button owning aria-expanded (row loses tabindex, false never removed); F54 Window buttons sync aria-pressed; F55 closed sub-queue details are inert; F56 open sub-queue cards survive re-renders; F57 Health folds survive the Neon repaint; F58 per-agent Copy data names; F65 Insights share links / Open in new tab carry dept (saved views stay dept-free); F66 a sort click mid-load no longer repaints the old window. 2476 tests, 10/10 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; walk S39 (its keyboard step now Tabs to the agent NAME). No operator steps.
+  **Next:** Batch 8 (per-call edges: F30, F31, F32, F34), then Batches 9-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 6 IMPLEMENTED (block 259): client state + consent.** F47 a saved YTD chart range is fetched at boot; F48 the YTD cache follows the Overview latest date; F49 the IR edit popover takes the R30 clamp; F50 a config save/remove drops the alert preview (and an in-flight one); F16 the digest link carries dept= and the Insights link applies it (shareApplyDeptParam_, shared with #/dept); F51 the silent refresh keeps the Overview agent rows; F52 roster loaders reset to the skeleton; F25 latest dates re-read every 5 min. 2467 tests, 12/12 unit bites + 1 rendered, lint + INV-16 + module-deps clean, ci:ui all stages green (new drive-smoke YTD-boot stage).
+  **Owner-side:** deploy the dashboard. No operator steps. Next digest send carries the dept param.
+  **Next:** Batch 7 (a11y: F26, F27, F54-F58, + F65/F66 added from the Batch 6 follow-ons), then Batches 8-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 5 IMPLEMENTED (block 259): UX-2 brief coherence.** F20 the Callbacks row quotes only the on-screen window's payload (and repaints on load); F21 View-as redraws the trend shading; F22 the headline's "behind" count uses the R18 benchmark; F23 the "need a look" count includes the top line; F24 a Callbacks jump switches direction only from Inbound (Both is never overwritten); F28 no Queue health row while its fold is hidden. 2460 tests, 8/8 bites + lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; re-walk S61. No operator steps.
+  **Next:** Batch 6 (client state: F47, F50, F49, F16, F48, F51, F52, F25), then Batches 7-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 4 IMPLEMENTED (block 259): cache anchors + DAL.** F4 Overview + YTD keys carry the QCD freshness tag; F5 computeQcdReport_ raises the outage flag (Insights never caches a Neon-miss zero); F29 Agent Day + the inline panel strip narrow to the row's dept (rows carry data-dept); F33 the Agent Day DQE read is one agent (strip without missed detail) unless narrowing is on; F61 an empty label union turns the on-hold label arm off. 2454 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 5 (UX-2 brief coherence: F20, F21, F22, F23, F24, F28), then Batches 6-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 3 IMPLEMENTED (block 259): escalations + access.** F44 escalation times as script-zone wall clock + overdue on the script-zone date; F45 snapshot Overdue computed, MTD a dash; F1 no welcome email for a staged agent row; F3 coaching close connects before the lock; F2 Report Usage formula guard. 2449 tests, 7/7 bites, lint + INV-16 + module-deps clean, ci:ui all stages green.
+  **Owner-side:** deploy the dashboard; optionally `SHOW TimeZone;` in Neon to confirm F44 was live. Follow-ons: escalation MTD month boundary + Coaching timestamps are the same UTC class.
+  **Next:** Batch 4 (cache anchors + DAL: F4, F5, F29, F33, F61), then Batches 5-10 per the cycle-259 list below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 Batch 2 IMPLEMENTED (block 259): false-clean gates + backup.** F42 config compare gates fail a duplicated key + report `compared`; F43 outbound vetting INCONCLUSIVE with 0 called-back pairs; F15 the backup keeps its Sheets store (NEON_BACKUP_STORE=drive to move), restore never creates one; F18 DQE-silence INCONCLUSIVE on a zero-agent day; F19 Alerts EMPTY over assessed depts; F46 audit verdict names double-claimed queues; F17 ingest watchdog records its installer. 2443 tests, 9/9 bites, lint + INV-16 + module-deps clean.
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 3 (escalations + access: F44 first -- run `SHOW TimeZone` on Neon), then Batches 4-10 per the list in the cycle-259 entry below.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- Broad scan cycle 259 (64 findings F1-F64, G1-G5, ST1-ST5) + Batch 1 IMPLEMENTED (block 259).**
+  - Batch 1 (pipeline loss + silent green): F7 the catch-up also rebuilds Direct + re-mirrors CDR/QCD/DQE (deferred: queues) for an already-imported date; F8 hashless per-call writes fail every backfill-driven path; F9 the retention prune keeps tabs whose capture is still owed; F10 COALESCE comment/doc truth.
+  - Verification: 2434 tests (+11), 8/8 bites, INV-16 + module-deps + lint:gas clean.
+  **Owner-side:** deploy cdr-import (cdr-report: comment-only INV-16 pair, push to keep it identical). No operator steps; HMAC_SECRET missing in cdr-import now shows red (Operator State #17).
+  **Next (the scan's plan; full report in the session record):**
+    - Batch 2 false-clean gates + backup: F42 config-source compares (duplicates/compared/empty), F43 outbound vetting with 0 called-back pairs, F15 NeonBackup Sheets->Drive switch, F18 DqeSilence readiness gate, F19 Alerts EMPTY with skipped rows, F46 auditQueueSplitAttribution verdict, F17 IngestWatchdog installer record.
+    - Batch 3 escalations + access: F44 server timestamps shown in UTC (check `SHOW TimeZone` first) + CURRENT_DATE overdue, F45 snapshot overdue/MTD zeros, F1 welcome email for staged agent rows, F3 Coaching close lock-before-connect, F2 logReportUsage_ sheetSafeCell_.
+    - Batch 4 cache anchors + DAL: F4 Overview/YTD keys lack qcdFreshnessTag_ (+INV-30 text), F5 computeQcdReport_ outage flag, F29 AgentDay/strip queue-split narrowing, F33 AgentDay agent filter, F61 empty final-dept union double-count.
+    - Batch 5 UX-2 brief: F20 stale callbacks row, F21 view-as shading, F22 insHeadline_ R18 basis, F23 top line, F24 Both overwrite, F28 hidden queue row.
+    - Batch 6 client state: F47 YTD at boot, F50 alert preview after config edit, F49 IR popover clamp, F16 digest link dept, F48 YTD refresh, F51 silent-refresh table blank, F52 IR roster stale error, F25 latest-dates cadence.
+    - Batch 7 a11y: F26 --ink-muted dark, F27 agent-table tr, F54-F58.
+      + F65 (added 2026-10-15 from Batch 6's follow-ons, owner): the Insights SHARE_STATE_ collect() omits dept, so "Open in new tab" / saved views of a non-default dept land on the viewer's default dept (the F16 class; script-4-nav.html).
+      + F66 (added 2026-10-15 from Batch 6's follow-ons, owner): a header click on the Overview mini-table while a NEW window loads re-sorts the previous window's rows (ovUserRows_ kept until the reply lands; script-3-overview.html).
+    - Batch 8 per-call edges: F30 trailing attempts, F31 outbound email flags, F32 PC-3 order, F34 Caller Lookup inbound availability.
+    - Batch 9 mirrors: F11 drill col E/AD-AF, F12 sentinel rows, F13 overlap audit, F59 queueSplitSample strays, F60 qdd row-2 date, F63 CSR N1:X1 header check, F64 stray legs in daily engines.
+    - Batch 10 deploy/docs/tooling: F35 INV-17 premise (operator check first), F41 deploy.sh dirty scope, F40 INV-16 deploy skew, F38 lint allowlist, F39 harness memo reset, F36/F37/F6/F14/F53 docs + dead code.
+    - Deferred: F62 PC-1 retroactive rewrite (owner ruling). Expansion E1-E5 (G1-G5, ST1-ST5) optional.
+  **Where I left off:** committed and pushed on claude/exciting-goodall-7tkygn, no PR.
+- **2026-10-14 -- WS-1 verified + /sync-docs.** Everything through #368 is merged; the branch was restarted from main.
+  - The owner ran `previewInternalWaitStartAllDates` (9 dates, 2026-09-30..2026-10-12): 1,516 internal records UNCHANGED, CHANGED 0, SUSPECT 0; 9,110 external, 0 changed. Clean -- no Manual Export needed (recorded in Operator State #75).
+  - /sync-docs over dec41e3..73cb259 (UX-2 + the command sync): #75 first-run note, CLAUDE.md index line 75 + the ranked brief in the client-conventions index, the Agents fold in client-ui-conventions' folds entry. CLAUDE.md ~175 KB.
+  **Owner-side (still open):** set per-dept answer targets (Alerts -> Answer targets, #37); walk S61; decide the UX-2 manager release after ~2 weeks; cdr-import re-consent (SEC-7); delete dbReporting.gs in the cdr-report web editor (#29).
+- **2026-10-13 -- /sync-commands to claude-workflow-tools v1.43.0.** Ten commands copied from the template (audit, broad-implement, broad-scan, cycle-init, cycle-resume, implement, pr-review, reflect, targeted-audit, targeted-implement); `sync-docs` kept as the local five-check version. New: the audits' CYCLE OPEN step (the `Cycle:` field above), F/G/ST IDs and the scan's EXPANSION PLAN. Merged as #368.
+- **2026-10-13 -- UX-2 BUILT as an admin trial (Insights ranked brief).**
+  - Owner rulings: the recommended thresholds from the first probe run (share grey; queue wait amber at 1.5x own prior-3-month median, 5+ calls/day; trend amber 8 / red 12 pts vs prior-3 avg; shading +-2..15) and option 1 for the top line (per-dept answer targets, operator step, Operator State #37).
+  - Built: `insRenderBrief_` + pure rules (script-8), `--caution` token, Agents fold first/open, one-line fold heads, trend-point shading (admin), `queueHealth.perQueue[].wait` + QCD monthly avgAnswerSec (insights:v25).
+  - Verification: 2423 tests (new insights-brief suite, 7 unit bites), drive-smoke +6 UX-2 checks (2 rendered bites), full ci:ui green, lint clean.
+  **Owner-side:** deploy the dashboard; set per-dept targets in Alerts -> Answer targets; walk S61; after ~2 weeks decide the manager release (next-steps "UX-2 RULED" has the steps).
+  **Where I left off:** merged as #367.
+- **2026-10-13 -- /sync-docs over 7768d2d..2005240 (broad-scan batches 1-11, WS-1, UX-2, the probe).** 16 drifts fixed across CLAUDE.md + six split docs: PC-4 collisions (#56, S31), PIPE-7 (#56, tests/README), TOOL-6 dbReporting.gs web-editor delete (#29), WS-1 wait exception (CLAUDE.md + per-call-capture), UX-1 leftovers (S46, client-ui-conventions heading, architecture), ENG-6 IDLE (#12), ENG-7 / ENG-8 / PipelineWatch quiet kinds / DATA-6 / DATA-3 in CLAUDE.md, the R49 mirrors, the span-reader callers, the beacon sites, the swept prefs keys, the phone-hash file wording, script.html:: locations -> fragments; Health-row inventory trimmed to Operator State pointers. CLAUDE.md 174.5 KB (25.5 KB headroom).
+- **2026-10-13 -- UX-2 RULED + the brief-threshold probe written (Operator State #76).**
+  - Owner: option A on all three UX-2 decisions (docs/next-steps.md). No threshold yet, by owner choice, for Callbacks, outbound connect %, ATT or missed-call counts.
+  - `probeBriefThresholds()` (Diagnostics.gs, editor, admin, read-only): share of answered (raw + per day worked, SD / CV / >1 / >2 SD), queue wait (vs company, vs own prior-3-month median, daily jumpiness, volume correlations), monthly answer-rate swings (MoM / vs3, counts at 2/3/5, pooled p50/p90/p95). Window BRIEF_PROBE_FROM/_TO or the 12 whole months ending last month.
+  - Verification: 2413 tests (new brief-thresholds-probe suite, 6 bites), lint clean, module map regenerated. No client change, so ci:ui was not re-run.
+  **Owner-side:** deploy the dashboard, run `probeBriefThresholds` from the editor, bring back the log.
+  **Next:** pick the share / queue-wait / trend thresholds from that log, then build UX-2.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-13 — Broad scan Batch 11 IMPLEMENTED (block 258): docs, deploy, code health + PIPE-7. The 2026-10-12 batch plan is COMPLETE.**
+  - Fixes:
+    - PIPE-7 (option A): the catch-up fills per-call capture for an already-imported date, and keeps it pending while Neon is down.
+    - DEP-2: stamp branch sanitized; the trap restores from a copy.
+    - DEP-1: playwright pinned everywhere.
+    - SEC-7: cdr-import uses drive.readonly; the scope suite now tells Drive reads from writes.
+    - TOOL-6: dbReporting.js deleted.
+    - DATA-9: comment.
+    - DOC-1..7.
+  - Verification: 2407 tests; ci:ui green; lint clean; 9 bites.
+
+  **Owner-side:**
+  - Deploy cdr-import, cdr-report and the dashboard.
+  - RE-CONSENT cdr-import right after its push (run any function, accept), Operator State #9.
+  - Delete dbReporting.gs in the cdr-report web editor (INV-17).
+  **Next:** UX-2 is RULED (owner 2026-10-13, option A x3 -- docs/next-steps.md has the rule) and ready to build; still deferred: SEC-1 floaters, SEC-2 Agent Day outbound, PIPE-8 operator; or the recorded follow-ons -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-13 — Broad scan Batch 10 IMPLEMENTED (block 257): cache anchors + combined-view perf.**
+  - Fixes:
+    - DATA-6: `summary` / `insights` keys carry the latest QCD date (qcdFreshnessTag_).
+    - DATA-7: the combined view computes QCD/CSR for the requested dept only, and CSR's two transfer calls share one date-column read.
+    - DATA-8: a narrowed crossover slice is subtracted when another dept fell open (B-1) to the all-queue superset (latent, QUEUE_SPLIT_SCOPE=dept only).
+  - Also this session: PIPE-7 option A added to Batch 11 (owner).
+  - Verification: 2401 tests; ci:ui green; lint clean; 7 bites.
+
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 11 (docs, deploy, code health + PIPE-7; SEC-7 needs one re-consent) -- the last broad-scan batch.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 9 IMPLEMENTED (block 256): agent app + accessibility.**
+  - Fixes:
+    - UI-1: agent-panel and inbound-drill tabs get arrow keys + roving tabindex.
+    - UI-2: agent page live regions.
+    - CL-6: a rejected range keeps the numbers and puts the controls back; custom clamp; History Retry.
+    - CL-7: strict mode actually on.
+    - CL-8: the work window from the constants, incl. the CSR family's 8:00 start.
+    - SEC-4: the note for the capped wait lookup.
+  - Verification: 2396 tests; ci:ui all green (11 new rendered checks); lint clean; 9 bites (2 rendered).
+  - Also answered: PIPE-7's design choice. Recommended option A (on "already in history", check Neon for the date's per-call rows and backfill if missing); awaiting the owner.
+
+  **Owner-side:** deploy the dashboard. No operator steps.
+  **Next:** Batch 10 (cache anchors + combined-view perf) or Batch 11 (docs, deploy, code health; SEC-7 needs one re-consent) -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — WS-1 IMPLEMENTED (block 255): the internal-call wait starts at the requester's queue leg (owner option 1, the Batch 8 follow-on).**
+  - Change: call_start / call_date are unchanged; external calls are unchanged.
+  - New read-only tool previewInternalWaitStart (CDR Tools → Diagnostics, pick a date or all dates). It logs each internal call's old and new wait, flags SUSPECT rows, checks that external calls do not move, and shows what Neon stores. Runbook: Operator State #75.
+  - Verification: 2391 tests; 5 bites.
+
+  **Owner-side:** push cdr-import, run the tool on all dates (expect SUSPECT 0 and 0 external changes), then Manual Export the dates you want corrected and re-run the tool to see "Neon has: … (NEW)".
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 8 IMPLEMENTED (block 254): repair, per-call and drill edges.**
+  - Fixes:
+    - PIPE-9: merge re-run re-blanks AI..AK and queues the Neon clear.
+    - TOOL-5: drill names Raw Data's day.
+    - PIPE-10: PST shift heals a lagging AF.
+    - PIPE-11: no-op abandoned-id repair takes no snapshot.
+    - PIPE-12: outbound ring on the connecting attempt.
+    - PIPE-13: final_dept/wait end scoped to the requester.
+    - PIPE-14: BF-1 preview runs no DDL.
+    - PIPE-15: force backfills without HMAC_SECRET refuse mirrored dates.
+  - Decision while implementing: PIPE-15 refuses per already-mirrored DATE rather than the whole run, so the deferred mirror still writes new dates.
+  - Verification: 2388 tests; lint clean; INV-16 in sync; 11 bites. No client change.
+  - Follow-ons: the internal-record wait START -> done as WS-1 (block 255); PIPE-15's mirrored-date read fails open.
+
+  **Owner-side:** deploy cdr-report and cdr-import. No new operator steps.
+  **Next:** Batch 9 or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 7 IMPLEMENTED (block 253): pipeline data rules, plus the Batch 6 follow-ons.**
+  - Fixes:
+    - PIPE-1: bulk CDR/QCD Neon mirrors are authoritative per date, and the bulk report names the DQE prune.
+    - PIPE-3: processNewImport refuses a tab whose most common call date is not the tab's date, before any write or delete.
+    - PIPE-5: Manual Export raises the CR-5 marker, and the standalone DQE build defers its sort while it is fresh.
+    - Follow-ons: ENG-7 logFailed row field plus the modal warning; ENG-14 diagnoseAbandoned says when the sheet is gone.
+  - Verification: 2380 tests; ci:ui green; lint clean; INV-16 in sync; 9 bites.
+
+  **Owner-side:** deploy cdr-import, cdr-report and the dashboard. After the next bulk rebuild, run the upsert and then previewNeonExtraRows / pruneNeonExtraRows.
+  **Next:** Batch 8 (repair, per-call and drill edges) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 6 IMPLEMENTED (block 252): engine robustness, low tier.**
+  - Fixes:
+    - ENG-3: PIPELINE_WATCH_SEEN byte cap.
+    - ENG-4: queue-report marker written before the claim is released.
+    - ENG-5: fixed 6 h beacon window.
+    - ENG-6: digest IDLE outcome renders muted.
+    - ENG-7: an Alert Log append failure no longer aborts the run (FAILED-LOG + do-not-re-send email).
+    - ENG-9: smoke check reads uncached.
+    - ENG-14: diagnoseAbandoned matches by queue name via the report's helper.
+  - Also this session: SEC-4's wait-join cap note queued in Batch 9 (owner).
+  - Verification: 2375 tests; lint clean; module map regenerated; 9 bites. No client change, so ci:ui was not needed.
+
+  **Owner-side:** deploy the dashboard (Batches 1-6). No new operator steps.
+  **Next:** Batch 7 (pipeline data rules: cdr-import + cdr-report) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 5 IMPLEMENTED (block 251): config, access + cache dimensions.**
+  - Fixes:
+    - CFG-1: first active row wins for the parent map.
+    - PC-4: orphan rename skips collision days and warns (owner).
+    - DATA-4: outage-empty QCD Neon read is flagged.
+    - SEC-3: deleted ids excluded from the snapshot; a failed refresh is reported.
+    - ENG-8: last-good holiday copy plus one retry.
+    - DATA-1/2/10: roster hash on the companyOverview, insights and agent-app keys.
+    - DATA-5: no latestDates cache after a failed source.
+    - SEC-4: escaped LIKE plus a LIMIT in ahWaitJoin_.
+    - SEC-5: a foreign row reads as not found.
+  - Owner decision this batch: PC-4 = skip collisions + warn.
+  - Verification: 2367 tests; ci:ui green; lint clean; module map regenerated; 14 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-5). No new operator steps.
+  **Next:** Batch 6 (engine robustness, low tier) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 4 IMPLEMENTED (block 250): fallback tabs + bulk-path signals.**
+  - TOOL-1 export tabs re-read changed older dates (updated_at watermark, 10/run + pending; cdr-import correction UPDATEs bump updated_at); TOOL-2 Neon-down export failures not emailed (owner); TOOL-3 append before remove; TOOL-4 anchored prune; PIPE-2 bulk gap failure row + alert; PIPE-4 phone-history re-attach (owner); PIPE-6 enqueue failure row.
+  - Owner decisions this batch: TOOL-2 = skip Neon-down only; PIPE-4 = the re-attach design (the scan's naive fix would have orphaned the history or broken forced CDR writes under an FK).
+  - 2353 tests; Postgres 16 run of the PIPE-4 sequence with a plain FK; lint clean; 21 bites.
+
+  **Owner-side:** deploy cdr-import, cdr-report and the dashboard (Batches 1-4). If PC-1 / BF-1 already ran before this deploy, re-export those dates once by hand. Watch #47 for a week.
+  **Next:** Batch 5 (config, access and cache dimensions) or later -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 3b IMPLEMENTED (block 249): UX-1, one Outbound home on My Department.**
+  - The Outbound summary + Callbacks (+ Direct lines) moved under the outbound agent table; no duplicate agent table; "<dept> only" label + note when the table holds sub-queues.
+  - Decision made while implementing: both sections now read the PAGE's window + INV-28 prior (obSectionWindow_), not Insights' -- otherwise a collapsed Insights region would leave them empty. Consequence: an Insights YoY/custom comparison no longer drives the outbound summary.
+  - 2337 tests (new outbound-home suite); ci:ui all green incl. 4 new UX-1 driver checks; screenshot matched the mock; 7 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-3b + #364 items), walk S57-S59 (+ S30, S23, S56, S36, S20/S29, S32 from Batch 3).
+  **Next:** Batch 4 (fallback tabs + bulk-path signals) or later -- owner picks. UX-2 still deferred.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 3 IMPLEMENTED (block 248): client lifecycle.**
+  - CL-1 latest dates re-read while visible; CL-2 agent-panel cached-day seq; CL-3 hidden-tab Overview park; CL-4 no-ring prefetch sig checks; CL-5 month-end clamp; CL-9 Export button release; CL-10 IR close/open token; CL-11 subscriber-only reload; CL-12 Dept Config send-time dept + lock; CL-13 idle-label stash; CL-14 IR focus chain; CL-15 Health toggles.
+  - Decision: CL-13 keeps re-entry (newest wins) -- the scan's "ignore re-entry" half would drop the user's latest preset pick.
+  - 2334 tests (new client-lifecycle suite, out-of-order fake runner); ci:ui all green incl. a new drive-agentpanel focus check; lint clean; 21 bites.
+
+  **Owner-side:** deploy the dashboard (Batches 1-3 + #364 items), walk S30, S23, S56, S36, S20/S29, S32.
+  **Next:** Batch 3b (UX-1, the Outbound layout move) or Batch 4 (fallback tabs + bulk-path signals) -- owner picks.
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan Batch 2 IMPLEMENTED (block 247): green-while-broken + backup integrity.**
+  - ENG-10 a configured backup folder is never recreated or silently swapped for Sheets; ENG-11 scrubs don't stall on the inactive store; ENG-12 scrub/backup file lease; ENG-2 DQE-silence stays SILENT while an alerted dept is dark; ENG-1 reinstalls keep pending retries + Health "RETRY LOST"; ENG-13 backfills don't reset the Overview freshness clock.
+  - 2322 tests; lint clean; module map current; 13 bites (one survivor got its own test). No client change (ci:ui not needed). No cache bump.
+
+  **Owner-side:** deploy the dashboard (with Batch 1 + the #364 items), glance at the Health rows named in block 247.
+  **Next:** owner picks the next batch (3 = client correctness, then 3b UX-1).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **2026-10-12 — Broad scan + Batch 1 IMPLEMENTED (block 246).** The scan (3 stages; no Critical/High; full batch plan in docs/next-steps.md "Broad scan 2026-10-12") was followed by Batch 1, callback correctness before 6c:
+  - PC-1 episodes join across the window's edges (lookback + join-only trailing, one read span for all four fetchers); PC-2 pending vs the LOADED calls (disclosed); PC-3 manager callback-path entitlement (gated on 6c, Neon-only); PC-5 meta.unmapped; DATA-3 roster hash. outboundReport:v9, outboundDirect:v3.
+  - 2309 tests; ci:ui green; lint clean; Postgres 16 run of the new SQL; nine bites.
+  - Owner decisions this session: UX-1 (Outbound + Callbacks move under the outbound table) is Batch 3b, after Batch 3; UX-2 (the Insights ranked brief) deferred pending the urgency rule / manager visibility / amber-vs-red call.
+
+  **Owner-side:** deploy the dashboard (with the CE/FO/BF items still pending from #364), walk S48, S59, S60; re-check #47 a week later.
+  **Next:** owner picks the next batch (2 = green-while-broken + backup integrity is the suggested order).
+  **Where I left off:** committed and pushed on claude/relaxed-cannon-og9gdn, no PR.
+- **NEXT (2026-10-12):** CE-1..CE-3 + FO-1..FO-4 + BF-1/BF-2 + the sync-docs pass are MERGED (#364, `e73574d`) but NOT deployed. Owner deploy order (Operator State #49): (1) push cdr-import, then from its editor `previewFirstRingBackfill()` -> Neon backup -> `backfillFirstRingFromJourney()` (re-run if it stops at the time budget); (2) push cdr-report, then `exportInboundCalls('<earliest date to cover>', '<today>')` once; (3) push the dashboard + new deployment version, walk S48, S59, S60. Pending: /reflect over blocks 241-245. Open owner question: managers seeing call ids at the 6c release.
+- **2026-10-09 — /sync-docs after CE-1..BF-2.** CLAUDE.md: the Operator State #49 index line names the direct-line fallback + the BF-1 backfill. architecture.md: the Outbound row's three new RPCs + `outboundDirect:v2:`, the export's cols 23-24. fix-history: the Callback-episodes intro past tense. Harness README: the FO-1/2/3 driver checks. CLAUDE.md 172.8 KB (27.2 KB headroom); nothing prunable without dropping a rule -- the two largest bullets sit ~200 B under the 4 KB ratchet, so route their next additions to a split doc.
+  **Where I left off:** PR opened and merged per the owner's instruction.
+- **2026-10-09 — BF-1 + BF-2 IMPLEMENTED (block 245).**
+  - BF-1: cdr-import `previewFirstRingBackfill()` / `backfillFirstRingFromJourney()` derive first_ring_seconds for older direct-line missed/abandoned calls from the stored journey (first leg naming the line owner, canonicalized; NULL-only writes; unknown stays NULL). Run end to end on Postgres 16.
+  - BF-2: outboundAgentsSel_ groups by `COALESCE(trim(agent_name), '')`, the sheet twin's key.
+  - 2296 tests; every ci:ui stage green; seven bites.
+
+  **Owner-side:** after the cdr-import push, preview -> Neon backup -> apply the backfill, then the Inbound Calls re-export (#49). Open: managers seeing call ids at 6c.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-09 — CE follow-ons IMPLEMENTED (block 244).** Owner rulings: misdial = a ring under 8 s (out of the rates, counted; unknown ring stays in); add the First Agent export column + a sheet backup; no Overview per-dept direct table for now.
+  - FO-1: cdr-import captures `inbound_calls.first_ring_seconds`; the direct SQL flags misdials via `to_jsonb` (works before the column exists). outboundDirect:v2.
+  - FO-2: Inbound Calls export cols 23-24 (First Agent / First Ring Sec); both direct endpoints fall back to the export tabs (parity-pinned twin of the SQL), uncached, disclosed.
+  - FO-3: the #/report/outbound deep-link scroll holds until the page settles (the G3 flake). FO-4: agent tie order COLLATE "C" NULLS FIRST.
+  - 2290 tests; every ci:ui stage green; Postgres 16 parity; eight bites + a probabilistic UI bite.
+
+  **Owner-side:** deploy cdr-import, then cdr-report + the one-time `exportInboundCalls` re-export (#49), then the dashboard; walk S60. Open: managers seeing call ids at 6c.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-09 — CE-3 IMPLEMENTED (block 243): direct-line callbacks.**
+  - Unanswered external calls to a PERSON's line, counted as episodes; credit goes to the line owner's team, split by the person / by their team, another team kept apart; work hours and after hours shown separately; `Sales Voicemails` -> Sales (the only shared line, owner).
+  - New `getOutboundDirectCallbacks` (cached `outboundDirect:v1`) + `getOutboundDirectRepeats` (2+ attempts in 3 days, nobody called back). "Direct lines" sub-folds in the Insights Callbacks fold and the Overview's Callbacks by department.
+  - Direct SQL run on a local Postgres 16; 2283 tests; every ci:ui stage green; five bites.
+
+  **Owner-side:** deploy, walk S60. Open: a misdial filter (no wait_seconds on missed direct calls), managers seeing call ids at 6c, a per-dept direct table on the Overview.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR. The callback-episodes plan (CE-1..3) is complete.
+- **2026-10-09 — CE-2 IMPLEMENTED (block 242): the callback drill lists.**
+  - Not-called-back list grouped by episode: status (still inside the window, N days left / missed), late tags read 14 days past the window (called back late / got through later -- tags only), the dialed line, the call id + copy (admin).
+  - New `getOutboundCalledBack` + "List called-back calls": dialer, roster team, own / another team, delay from the first attempt, connected, "↳ callback path" into the outbound call.
+  - Both endpoints run on a local Postgres 16; 2273 tests; five bites.
+
+  **Owner-side:** deploy, walk S59's list steps. Open question for the 6c release: should managers see the call id + copy (today admin-only, owner round 4)?
+  **Next:** CE-3 (direct-line callbacks).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-09 — CE-1 IMPLEMENTED (block 241): the callback figures count contact EPISODES.**
+  - Owner rulings 2026-10-09 (docs/next-steps.md "Callback episodes + direct lines"): phone-menu hang-ups out of the rate; own team and another team both shown, clearly apart; repeat attempts as episodes; the team-aware refinement; repeat unreturned caller = 2+ attempts in 3 days, no callback (CE-3).
+  - One pure engine (`obCallbackEpisodes_`) for the Neon path (event rows, integer caller keys) and the sheet fallback; every callback surface moved (Insights fold, Overview table + mapped-only headline, email, not-called-back list). outboundReport:v8.
+  - The event SQL was run against a local Postgres 16 and matched the sheet path; seven mutation bites; 2268 tests.
+
+  **Owner-side:** deploy, walk S48 + S59.
+  **Next:** CE-2 (drill lists), then CE-3 (direct-line callbacks).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l (branch restarted from main after #363 merged), no PR.
+- **2026-10-08 — FO-3 + G3 IMPLEMENTED (block 240): the Outbound modal is retired.**
+  - FO-3: one client store (obSummaryFetch_) for getDeptOutboundSummary, shared by the Batch D table and the Insights Outbound fold; a switch to Outbound now sends each window once.
+  - G3: modal markup + menu item + modal-only client code removed; `#/report/outbound` lands on My Department -> Outbound with the Callbacks fold open (admin; a plain landing for anyone else); the 6c pin pairs the gate with #dept-dir-switch / #ins-ob-fold / #ins-cb-fold and fails if the modal returns. Harness getLocation is async + deep-linkable.
+  - 2244 tests; every ci:ui stage green; four bites.
+
+  **Owner-side:** deploy, walk S46's pre-release half, S48, S59. The 6c release (#63 step 4) whenever vetting is done.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-08 — G2 follow-ons IMPLEMENTED (block 239).** FO-1: Batch D's outbound view no longer re-sends a request for a window already in flight (a Refresh sent each window twice; a new two-round driver check reproduced it and now passes). FO-2: the ui-harness README warns that a stale manager build makes manager checks pass vacuously on hand runs. Gates green.
+  **Next:** G3 (retire the modal) before the 6c release; owner call on sharing one store between the Batch D table and the Insights Outbound fold (they fetch the same windows twice).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-08 — Batch G2 IMPLEMENTED (block 238): Callbacks by department on the Overview + the Insights Outbound fold follows the switch.**
+  - Owner: "align it too" -> `#ins-ob-fold` shows only on Outbound / Both (like G1's Callbacks fold).
+  - `#ov-cbdept-fold`: the company callback table + five tiles at the bottom of the Overview, ADMIN-ONLY FOREVER (not in the 6c pair), lazy (fetch only while open, own window Last 7/30 days/3 months, one fetch per window, never on the auto-refresh). Drawn by the modal's renderers through a per-surface VIEW (own sort); one shared column list builds both headers.
+  - New blocking stage drive-cbdept.js (19 checks); a "G2" cross-file pin; drive-subqueue / drive-agentpanel CSV selectors tightened (they clicked the first page-wide "Download CSV"). 2243 tests; every ci:ui stage green; four mutations bite.
+
+  **Owner-side:** deploy the dashboard and walk S48 (now on the Overview), S58's direction step and S59.
+  **Next:** G3 (retire the modal) before the 6c release.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-08 — Batch G1 IMPLEMENTED (block 237): the Callbacks fold in Insights — step 1 of moving the Outbound report onto My Department.**
+  - Owner rulings (2026-10-08): managers get the My Department version, not the modal; Callbacks by department goes to an admin-only Overview section (G2); integrate first, release once (G3 before 6c). `runOutboundVettingCheck` read `ok parity`; the owner is still vetting accuracy before release. The source probe (#74) read MISMATCH, so outbound stays on Neon (already the design).
+  - `#ins-cb-fold`: the modal's callback tiles, strips, chart, not-called-back drill + call path, CSV / email, drawn by the modal's OWN renderers (now target-aware in script-9). Outbound / Both only, admin-only, lazy (fetch on open, one per window).
+  - The 6c pin and the UI-5 pin moved with it; new blocking stage drive-callbacks.js (24 checks); 2242 tests; every ci:ui stage green; two mutations bite.
+
+  **Owner-side:** deploy the dashboard and walk S59.
+  **Next:** G2 (Overview Callbacks by department), then G3 (retire the modal), then the 6c release when vetting is done.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-07 — Batch F IMPLEMENTED (block 236): prior-period chips on outbound, admin-only.**
+  - Tiles: a Placed chip and a connect-rate chip (in points) against each card period's INV-28 prior window, counted in the same Overview read (companyOverview:v28). A period whose prior window predates capture shows no chip (YTD, 60/90 today).
+  - My Department Outbound / Both rows: chips on Connected, Not connected (always gray) and Connect %, against the summary's own prior window via a second cached RPC. Never on totals.
+  - Muting: counts under 3 calls; the rate under 2 pts or when either window placed under 10 calls.
+  - 2239 tests, every ci:ui stage green, four pins and the driver bite.
+
+  **Owner-side:** deploy the dashboard (A to F) and walk S56, S57 and S58.
+  **Next:** the 6c release when vetting is clean (Operator State #63).
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-07 — Batch E IMPLEMENTED (block 235): outbound on the Overview tiles + an Outbound fold in Insights, admin-only.**
+  - E2: one grouped Neon read inside the cached Overview blob (companyOverview:v27). Each tile gets placed / connected / connect % for the selected card window, with "since Jul 10" on a pre-capture window. It is stripped for every non-admin while OUTBOUND_VETTING_GATE_ stands, and fails closed.
+  - E1: `#ins-ob-fold` compares the region's window with its prior window through getDeptOutboundSummary, keeping the dept's OWN group. It is gated by obAllowed_ like Batch D.
+  - The 6c pin now moves the fold too. New stage drive-outbound-e.js (18 checks). 2234 tests, every ci:ui stage green, three pins and the driver bite.
+  - Two vacuous checks in the B/D drivers are fixed.
+  - Decision: no sheet fallback for the tile line. A failed read omits the line and the blob still caches.
+
+  **Owner-side:** deploy the dashboard (A to E) and walk S56, S57 and S58 as the admin; watch the first cold Overview load.
+  **Next:** the 6c release when the vetting run is clean (Operator State #63), or the follow-ons in block 235.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-07 — Batch D IMPLEMENTED (block 234): Inbound | Outbound | Both on My Department, admin-only.**
+  - `getDeptOutboundSummary` is the Outbound report's per-agent half: shared SQL and sheet aggregation, plus `ob_days`; the same 6c gate; cache `deptOutbound:v1:`.
+  - The switch renders a separate outbound/both table; the Team Outbound panel sits alongside it.
+  - The 6c pin now moves the switch with the report.
+  - New stage drive-deptoutbound.js (23 checks). 2226 tests, all ten ci:ui stages green, six pins bite.
+  - Decision: D reads Neon (with the Outbound Calls tab fallback) regardless of the Batch C verdict, because talk time and connects cannot come from the CDR Historical sheet.
+
+  **Owner-side:** deploy the dashboard (A to D) and walk S56 and S57 as admin.
+  **Next:** Batch E (done, block 235).
+  **Where I left off:** committed and pushed, no PR.
+- **2026-10-07 — Batch C IMPLEMENTED (block 233): outbound source probe.**
+  `probeOutboundSourceAgreement()` (dashboard, editor-run, read-only) compares
+  the CDR Historical sheet's `OB External Total` with Neon `outbound_calls`
+  per agent-day.
+  - The verdict is pre-registered on PLACED only; duration and connected are information only.
+  - Coverage-gap dates are listed and excluded; too many make the run INCONCLUSIVE.
+  - Operator State #74 is the runbook. 2219/2219 tests, ci:ui green, six pins bite.
+  **Owner-side:** deploy the dashboard (A + B + C together), run the probe once, and send back the verdict line plus the log.
+  **Next:** Batch D, whose read source depends on that verdict.
+  **Where I left off:** committed and pushed, no PR.
+- **2026-10-07 — Batch B IMPLEMENTED (block 232): the inline agent panel on
+  My Department.** A row click, Enter or Space opens a panel below the row with:
+  - the agent's days with activity in the loaded window (`getAgentDayStrip`, newest first, at most 31, with "31 most recent of N" when cut);
+  - the selected day's Agent Day view (the modal's own helpers, with Inbound / Outbound / Missed-rings tabs);
+  - the Individual Report as its first button.
+  New gate stage drive-agentpanel.js (21 checks); drive-f13 walks row -> panel -> IR. 2206/2206 tests, every ci:ui stage green, six pins bite, and the driver bites.
+  **Owner-side:** deploy the dashboard (Batch A + B together), then walk S56, S39 and S47.
+  **Next:** Batch C (outbound probe), then D, then E.
+  **Where I left off:** committed and pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-06 — Batch A IMPLEMENTED (block 231): My Department ans/day + the
+  Agent Day tiles.** Owner plan (5 batches, A-E, agreed 2026-10-06 after the
+  inline-panel mock). A1 ans/day counts only days with rings (`summary:v23`).
+  A2 the figure sits beside the "(rung)" total; subtotal/total rows show the
+  team's answered per AGENT per day (floaters + team-average excludes out,
+  combined view sums the pair); hidden Ans / day column gone, CSV keeps it
+  after Answer %. A3 the bar's duplicate inline % removed. A4 Agent Day:
+  Inbound row (DQE four + journey Transferred / Hold) and Outbound row
+  (Placed / Connected / Talk / Unconnected brief-vs-rang-out / Attempts), "not
+  captured" before 2026-07-10, Neon down or no capture rows. 2200/2200 +
+  ci:ui green, 5 bites red. **Owner-side:** deploy the dashboard, walk S47.
+  **Next:** Batch B (inline agent panel: row click -> Agent Day under the row,
+  31-day strip, Individual report button), Batch C (outbound probe, any time),
+  then D, E (admin-only outbound views). The PR #354/#355-era items below
+  (S55, AF-1 step 3, transfer filter Phase 1) still stand. **Where I left
+  off:** committed + pushed on claude/optimistic-lamport-92xm9l, no PR.
+- **2026-10-05 — CDR Import tools round MERGED + DEPLOYED (#354, #355), then
+  /sync-docs.** #354: transfer filter Phase 0 probe, both CDR Tools menus
+  grouped, AF-1 abandoned-filter dialog + on-tab check (blocks 229-230). #355:
+  the Transfer shapes probe became one dialog, both cdr-import dialogs were
+  restyled after the dashboard's report modals (tokens copied inline, which the
+  sync recorded in per-call-capture + client-ui-conventions), and the dialog now
+  lists EVERY call, filterable by link type (only the copyable summary
+  samples). Owner deployed cdr-import and confirmed it works. The sync added a
+  fix-history section and a next-steps row; CLAUDE.md unchanged (171 KB, 29 KB
+  headroom). **Where I left off:** all merged; branch reset to main.
+  **Owner-side next:** walk S55 (run "Check the dialog against the old items"
+  first), then AF-1 step 3 (retire the fourteen items + wrappers); confirm the
+  Phase 0 transfer shapes (incl. whether possible blind transfers belong), then
+  transfer filter Phase 1. LEG-2 still waits on the decommission date.
+- **2026-10-05 — AF-1 IMPLEMENTED (block 229): the "Filter abandoned calls…"
+  dialog (cdr-import AbandonedFilter.js + AbandonedFilterDialog.html), steps 1-2
+  of the owner-approved plan.** Department presets carry the fourteen old items
+  verbatim (+ optional Backup CSR / A_Q_BackUp_FieldOps), per-queue default
+  thresholds with an optional custom one, an optional R49 work window, ONE
+  custom-formula filter. Parity test runs the OLD engine: the only difference is
+  the blank-queue legs every old item shows (old engine never hides a blank
+  cell). 2186/2186. **Follow-up same day (owner: no exclusion the old items
+  lacked):** no-queue-name legs now INCLUDED by default (lowest ticked
+  threshold; a dialog box turns it off), so parity is EXACT; the generated
+  formula is evaluated by an independent Sheets-rules evaluator in the suite;
+  and CDR Tools -> Abandoned Filters -> "Check the dialog against the old
+  items (this tab)…" (runAbandonedFilterCheck) reads Sheet.isRowHiddenByFilter
+  on a real tab for all 14 items + 5 dialog-only shapes -> VERDICT. 2191/2191.
+  **Owner-side:** deploy cdr-import, walk S55 (run the check first). **Next:** step 3
+  (retire the fourteen items + wrappers) after S55; step 4 (Transfers mode) after
+  the Phase 0 transfer shapes are confirmed.
+- **2026-10-05 — also this session (no blocks):** transfer filter Phase 0
+  (read-only `previewTransferShapes` probe, cdr-import transferFilter.js; the
+  inbound capture's concurrency index extracted into icBusyIndexes_ /
+  icConcurrentMatches_), and both CDR Tools menus regrouped into one-click
+  submenus (cdr-tools-menus.test.js pins both; six closed probes left the
+  cdr-import menu but stay editor-runnable; the cdr-report "DQE Tools" menu
+  folded into "Trace a Cell"). **Where I left off:** all on
+  claude/optimistic-lamport-92xm9l, pushed, no PR; owner to run the transfer
+  probe and S55.
+- **2026-10-02 — /sync-docs after the rulings round.** CLAUDE.md: the Health
+  `backup-scrub` row, the delete's backup scrub, Back/Forward in the router
+  index + drive-smoke line, a third "rule that bites" (the CH-4 payload
+  goldens), Operator State #73 (the QO-2 repair). docs/fix-history.md gained
+  the 2026-10-01 scan + rulings-round section (one row per batch, blocks
+  214-228). CLAUDE.md 174.7 KB (85.3%). **Where I left off:** PR for
+  Batches 13-15 + this sync opened and merged.
+- **2026-10-02 — rulings Batch 15 IMPLEMENTED (block 228).** CH-4: getSystemHealth
+  (~1000 -> ~50 lines, fifteen section helpers sharing one ctx) and
+  getCompanyOverview (~700 -> ~150, twelve stage helpers) split behind a
+  byte-for-byte payload golden (tests/unit/ch4-split-snapshot.test.js +
+  snapshots/ch4-payloads.json) committed BEFORE the split; 16 states, every
+  bite red; Overview half compares in America/Chicago only. An intended
+  payload change regenerates the golden with UPDATE_SNAPSHOTS=1. 2155/2155 +
+  ci:ui green. **Owner-side:** nothing new (deploy with the other batches).
+  **Where I left off:** committed + pushed on claude/optimistic-lamport-92xm9l,
+  no PR; the rulings round's batches (13-15) are all done; LEG-2 waits on the
+  owner's decommission date.
+- **2026-10-02 — rulings Batch 14 IMPLEMENTED (block 227).** ESC-D8 (a
+  permanent escalation delete scrubs the deleted rows out of every backup
+  snapshot + activity file in both stores; queued in
+  NEON_BACKUP_SCRUB_PENDING when a store is unreachable or a closed month is
+  not final yet; the backup run retries; Health `backup-scrub` row; restore
+  skips queued ids) and CL-23 (browser Back/Forward via google.script.history,
+  fail-quiet; harness recording mock + 16 drive-smoke checks). 2144/2144 +
+  ci:ui green. **Owner-side:** deploy the dashboard, then walk S54 in two real
+  browsers before release. **Where I left off:** committed + pushed on
+  claude/optimistic-lamport-92xm9l, no PR; next is Batch 15 (CH-4 selective
+  split of getSystemHealth + getCompanyOverview behind payload snapshots).
+- **2026-10-02 — rulings Batch 13 IMPLEMENTED (block 226).** QO-2 (violation =
+  4.00% or more: cdr-import qcdViolationFlag_ in integers + cdr-report's
+  date-gated repairQcdViolationFlags from 2026-08-01), DX-11 (conventions:
+  Pacific local, docs only), PC-12 (parent Outbound view includes sub-queue
+  rosters, grouped; outboundReport:v7), AC-2 (Email to agent: server enforces
+  one agent + writes the figures). 2133/2133 + ci:ui green. **Owner-side:**
+  deploy cdr-import + dashboard (blocking) and cdr-report, then
+  previewQcdViolationFlags -> repairQcdViolationFlags. **Where I left off:**
+  committed + pushed on claude/optimistic-lamport-92xm9l, no PR; next is
+  Batch 14 (ESC-D8 backup scrub, CL-23 back/forward).
+- **2026-10-02 — owner RULINGS on the scan's nine deferred items; PR #351 (Batches
+  1-12) MERGED.** Rulings + the three batches they became are in
+  docs/next-steps.md "Rulings round": DX-11 code correct (Pacific local, doc
+  fix only); QO-2 violation = 4.00% or more; AC-2 B; ESC-D8 C; PC-12 A;
+  CL-20 A (accepted); CL-23 B; CH-4 selective split (getSystemHealth +
+  getCompanyOverview only); LEG-2 B (decommission). **Waiting on the owner:**
+  the date the 4% violation rule took effect (QO-2's history repair is
+  date-gated on it). **Where I left off:** branch restarted from main
+  (3dfc830); nothing implemented yet; next is Batch 13 (QO-2, DX-11, PC-12,
+  AC-2).
+- **2026-10-02 — broad-scan Batch 12 IMPLEMENTED on the same branch (block 225).**
+  The LAST batch of the 2026-10-01 scan. Code health: CH-1 (the five
+  Diagnostics.gs tools are public + admin-gated, so the Run dropdown shows
+  them), CH-2 (invalidateAuthCache_ deleted), CH-3 (three dead helpers
+  deleted), CR-8 (R46 docblock). Docs: DX-1..5, 7..10, 12 truth pass; DX-6
+  moved seven client-surface KDD bullets to docs/client-ui-conventions.md
+  (CLAUDE.md 90.2% -> 84.8%). 2120/2120 green. **Owner-side:** deploy the
+  dashboard with the earlier batches. **Where I left off:** Batches 1-12 ALL
+  done and pushed on claude/optimistic-lamport-92xm9l, no PR opened; the
+  scan's deferred items (AC-2, PC-12, QO-2, ESC-D8, CL-20, CL-23, CH-4,
+  LEG-2, DX-11) wait on owner rulings; a one-off neon-mirror-tail timing
+  flake is logged in block 225's follow-ons.
+- **2026-10-02 — broad-scan Batch 11 IMPLEMENTED on the same branch (block 224).**
+  Harness strictness + CI: HT-2 (shape-strict setValues + display update),
+  HT-3 (cache key/value caps), HT-4 (formatDate tokenizer, throws on unmodelled
+  letters), HT-5 (live triggers + 20 cap, lock state, property limits), CL-9
+  (360 px overflow pass in drive-smoke + drive-agent), DEP-1 (bite.sh EXIT
+  trap), DEP-2 (deploy.sh dir normalization -- fixed a wrong-stamp case),
+  DEP-3 (dirty/branch warnings, STRICT_DEPLOY, one dirtiness flag), DEP-4
+  (placeholder scriptIds), HT-6 (CI Node 22). No production writer was
+  exposed by the stricter fakes. 2118/2118 + ci:ui green. **Owner-side:**
+  nothing to deploy (tests/tooling only). **Where I left off:** Batches 1-11
+  done and pushed, no PR opened; next suggested Batch 12 (docs and code
+  health: CH-1, ...).
+- **2026-10-02 — broad-scan Batch 10 IMPLEMENTED on the same branch (block 223).**
+  Performance (dashboard): DL-7 (per-execution memo for openSpreadsheet_ and
+  a single-read roster block behind getAllDepartments_ /
+  getRosterForDepartment_ / rosterAllDeptsHash_; appendRosterEntry_ busts it;
+  the harness now treats one h.call/h.fn as one execution) and DL-8 (Missed
+  report derives the dept queue-ext set only for a non-roster scope). 2105/2105 + ci:ui
+  green, lint + UTC run green. **Owner-side:** deploy the dashboard
+  (blocking). **Where I left off:** Batches 1-10 done and pushed, no PR
+  opened; next suggested Batch 11 (harness strictness and CI: HT-2, CL-9,
+  HT-5, HT-3, HT-4, DEP-2, DEP-3, HT-6, DEP-1, DEP-4).
+- **2026-10-02 — broad-scan Batch 9 IMPLEMENTED on the same branch (block 222).**
+  cdr-report repair + report safety: CR-1 (snapshot before the re-verify),
+  CR-2 (rewritten-columns checksum in the fingerprint), CR-3 (slot abort
+  restores formats + honest message), CR-4 (prune before copy), CR-5
+  (cross-project bulk marker the nightly sort honours), CR-9 (INV-52 readers
+  rewritten; CDR Historical force guard; Q Path stays unguarded), CR-7
+  (detect-only col D preview), CR-10 (CRB comparison window in calendar
+  days). 2100/2100 green. **Owner-side:** deploy cdr-report + cdr-import
+  (blocking) and the dashboard. **Where I left off:** Batches 1-9 done and
+  pushed, no PR opened; next suggested Batch 10 (performance: DL-7, DL-8).
+- **2026-10-02 — broad-scan Batch 8 IMPLEMENTED on the same branch (block 221).**
+  Client accessibility + hardening: CL-3 (escalation focus restore, rendered
+  check in drive-admin), CL-21 (remove/restore-dept in-flight guard), CL-13
+  (agent-app tabs pattern + history guard, rendered checks in drive-agent),
+  CL-12 (null-safe escapeHtml, escaped alert status), CL-19 (#/dev via
+  google.script.url), CL-10 (seven dead helpers removed), CL-8 (qcd-hero-sub
+  font), CL-11 (lang="en"). 2090/2090 + ci:ui green. **Owner-side:** deploy
+  the dashboard (blocking); try #/dev once. **Where I left off:** Batches
+  1-8 done and pushed, no PR opened; next suggested Batch 9 (cdr-report
+  repair and report safety: CR-1, CR-5, CR-2, CR-3, CR-9, CR-7, CR-4, CR-10).
+- **2026-10-02 — broad-scan Batch 7 IMPLEMENTED on the same branch (block 220).**
+  Client correctness: CL-2 (per-day Insights card deltas), CL-1 (Company
+  line THEME.ink), CL-15 (AC/DC save status survives reload), CL-17 (share /
+  digest links carry their window into the dept controls), CL-18 (per-step
+  boot guard + notice), CL-4 (sticky error toasts + inline status), CL-6
+  (heatmap error + Retry, no beacon per R19), CL-16 (View-as gates), CL-14
+  (agent presets never anchor on today), CL-7 (IR Generate release), CL-5
+  (share-link copy), CL-22 (partial subscriber save). 2083/2083 + ci:ui
+  green. **Owner-side:** deploy the dashboard (blocking). **Where I left
+  off:** Batches 1-7 done and pushed, no PR opened; next suggested Batch 8
+  (client accessibility + hardening: CL-3, CL-21, CL-13, CL-12, CL-19,
+  CL-10, CL-8, CL-11) -- ci:ui applies.
+- **2026-10-02 — broad-scan Batch 6 IMPLEMENTED on the same branch (block 219).**
+  BU-1 (backup refuses to recreate a set-but-unopenable workbook), DL-3 +
+  CR-6 (per-statement query timeouts via connection wrappers in the dashboard
+  and cdr-report reader factories), BU-4 (coaching FAILED/PARTIAL), BU-3
+  (backup run budget, newest-first, PARTIAL), EN-1 (trigger installer
+  recorded; foreign-owned triggers named on Health), EN-6 (watchdog 2 h
+  lookback + seen store), AC-6 (per-user beacon cap), BU-2 (WARN outcome),
+  EN-8 (recipient validation), EN-7 (denominator wording). 2071/2071 green.
+  **Owner-side:** deploy the dashboard (blocking) + cdr-report; re-run the
+  four editor installers from the deploying account. **Where I left off:**
+  Batches 1-6 done and pushed, no PR opened; next suggested Batch 7 (client
+  correctness: CL-2, CL-1, CL-15, CL-17, CL-18, CL-4, CL-6, CL-16, CL-14,
+  CL-7, CL-5, CL-22) -- client work, so ci:ui applies.
+- **2026-10-01 — broad-scan Batch 5 IMPLEMENTED on the same branch (block 218).**
+  ESC-D1 (activity rows record their dept at write time; move-history
+  backfill; esc-schema checks the new column; escSchema:v2), ESC-D3 (linked
+  edit refused when a sibling moved past pending), AC-3 incl. PC-11 (9 bare
+  role-none gates -> assertManagerOrAdmin_), ESC-D4 (last-active-copy delete
+  guard + full audit), ESC-D5 (offline denial = not-found shape), ESC-D6
+  (byte-measured snapshot chunks, logged failures), ESC-D7 (no spurious
+  sign-in email on a config-read failure). 2053/2053 green. **Owner-side:**
+  deploy the dashboard (blocking), open Escalations once, read esc-schema.
+  **Where I left off:** Batches 1-5 done and pushed, no PR opened; next
+  suggested Batch 6 (backups, timeouts, engine signals: BU-1, DL-3, CR-6,
+  BU-4, BU-3, EN-1, EN-6, AC-6, BU-2, EN-8, EN-7).
+- **2026-10-01 — broad-scan Batch 4 IMPLEMENTED on the same branch (block 217).**
+  DL-1/DL-2/QO-3 (the DQE + QCD parity gates count rows per key and the DQE
+  gate diffs the queue split), QO-1 (Overview MTD chip anchored on the latest
+  QCD date; companyOverview:v26), DL-4 (prior-window distance cap), DL-5
+  (roster hash on individual / missed / overviewChartYtd + the whole combined
+  summary set), DL-6 (Missed enrichment failure flagged, never cached), DL-9
+  (CacheWarm resets sticky flags per payload and counts real cache writes).
+  2041/2041 green. **Owner-side:** deploy the dashboard (blocking). Batches
+  1-3 deploys still owed as listed below. **Where I left off:** Batches 1-4
+  done and pushed, no PR opened; next suggested Batch 5 (escalations
+  integrity: ESC-D1, ESC-D3, AC-3 incl. PC-11, ESC-D4..D7).
+- **2026-10-01 — broad-scan Batch 3 IMPLEMENTED on the same branch (block 216).**
+  PC-1/PC-2 (per-call agent names stored roster-canonical via the shared
+  INV-24 canonicalizer + an editor-run Neon rewrite, Operator State #72),
+  PC-3, PC-4 (Direct direction/answered), PC-5 + PC-8 (journey entitlement),
+  PC-6, PC-7, PC-9 (R49 06:00 floor in the inbound/outbound queries;
+  inbound:v16, outboundReport:v6), PC-10 (hashless capture is a failure row).
+  2026/2026 green. **Owner-side:** deploy cdr-import + the dashboard
+  (blocking) + cdr-report; then run the #72 preview -> backup -> rewrite.
+  Deferred: PC-12, and PC-10's 10-digit phone normalization (hash-space
+  change, needs measurement). **Where I left off:** Batches 1-3 done and
+  pushed, no PR opened; next suggested Batch 4.
+- **2026-10-01 — broad-scan Batch 2 IMPLEMENTED on the same branch (block 215).**
+  AC-1 (fail-closed sub-queue access no longer locks parent managers out),
+  EN-2/AC-4 (alerts no longer hold the script lock across sends; date claim
+  instead), ESC-D2/AC-5 (escalations connect + schema before the lock, 30 s
+  statement timeouts, schema DDL memoized), EN-4, EN-3, EN-5. 2003/2003 green.
+  **Owner-side:** deploy the dashboard (blocking), walk S50-S53, read the
+  out-alerts / out-digest Health rows after the next 8 AM run. Still owed from
+  Batch 1: the cdr-import (+ cdr-report) deploy. **Where I left off:** Batches
+  1-2 done and pushed, no PR opened; next suggested Batch 3 (per-call agent
+  identity: PC-1..PC-10).
+- **2026-10-01 — broad-scan (new) + Batch 1 IMPLEMENTED on branch
+  `claude/optimistic-lamport-92xm9l` (block 214).** A fresh 3-stage broad scan
+  produced ~110 findings in 12 batches (IDs AC/DL/EN/PC/PIPE/IG/CR/CL/HT/DEP/
+  CH/DX/ESC-D/BU/QO -- new prefixes because SEC-/DATA-/OPS-/RPT-/UI- already
+  exist). Batch 1 ("ingest can't stall or silently lose tabs") is DONE and
+  pushed: HT-1, PIPE-1 (failed-import ledger + park after 3, `autoImport:parked`
+  row), PIPE-2 (window ends at today; prune keeps tabs not PROVEN imported),
+  IG-1, PIPE-3, IG-2 + DX-13, PIPE-5, PIPE-4. 1993/1993 green, lint clean.
+  **Owner-side:** deploy cdr-import (blocking) + cdr-report (INV-16 copy);
+  then read the next `retentionPrune` row for "KEPT N never-imported".
+  **Next suggested:** Batch 2 (lock discipline: AC-1, EN-2/AC-4, ESC-D2, AC-5,
+  EN-3/4/5). No PR opened (not requested).
+- **2026-10-01 — WHERE I LEFT OFF.** Everything below is MERGED to main:
+  Steps 0/1/2a/2b + ESC-L3/ESC-S1 + the first sync-docs pass as PR #348
+  (0dc15c9), and the reflect follow-ups (blocks 212-213) + the second
+  sync-docs pass + ESC-DDL2 as PR #349 (3da4feb). Owner DEPLOYED the
+  dashboard 2026-09-30 (that deploy predates #349) and ran "Back up now":
+  all four tables ok, written to the Sheets-workbook fallback (Drive is
+  disabled by the domain admin), 141 s, weekly Sat 6:00 trigger installed.
+  **Still owner-side:** (1) deploy the dashboard again to ship #349, then
+  read the two new Health rows once (`props-store`, `esc-schema` -- the
+  latter should read OK; a warn names the missing column/index); (2) walk
+  S50-S53 on the live app; (3) confirm the cdr-report push (EML-2's
+  `[Copy]` of the daily call report email) -- not stated; (4) optional
+  `ALL_DEPT_NOTIFY_OPT_IN` (#58). Branch `claude/broad-scan-gnfpx5`'s PRs
+  are merged -- new work restarts the branch from main.
+- **2026-10-01 follow-ups (blocks 212-213) -- MERGED as PR #349:** PROPS-1
+  (Health row: Script Properties store usage vs its 500 KB total, warn at
+  80%), ESC-G1 (CI sweep: every public escalation write verb refuses a
+  removed copy or is a reasoned exemption), ESC-DDL (the linked-copy column
+  migration logs on failure; Health `esc-schema` row verifies columns +
+  index), ESC-U1 (partial UNIQUE index on escalations (group_id,
+  department)), ESC-DDL2 (test: every escalations ADD COLUMN is listed in
+  `ESC_REQUIRED_COLUMNS_`), and the sync-docs pass (esc-schema in
+  CLAUDE.md, INV-55 status + required-columns rule). Reflect 207-211's
+  follow-ons: none left.
+- **PARKED IDEAS (owner asked to keep them, 2026-10-01; NOT approved to
+  build -- ask before starting either):**
+  1. **Email a department's managers when it is REMOVED from an escalation.**
+     Today `removeEscalationDepartment` (Escalations.gs) sends nothing; the
+     removed dept only finds out via the Removed filter. Shape: fire-and-log
+     AFTER commit + lock release (the create/move rule), flag-gated by
+     `NOTIFY_ON_NEW_ESCALATION`, recipients via `lookupDeptManagers_` (EML-1
+     ALL opt-in rule), subject e.g. "Removed from an escalation — <dept>",
+     body naming the reason + who removed it + the depts still on it (the
+     removal is often a DISPUTE outcome, so the reason is the point). Reuse
+     `escNotifyHtml_`'s shell; add a `removed` mode beside `restored` /
+     `movedFrom`. Tests: escalations-hardening (flag on/off, recipients, no
+     email on a refused removal). Docs: INV-55, OS #24, S52 step.
+  2. **Offline copy (ESC-S1) for CLOSED + REMOVED escalations' threads.**
+     The E2 rows snapshot holds OPEN rows only (status IN pending /
+     in_progress / pending_review), so escSnapshotActServe_ can authorize --
+     and serve -- only those; a resolved, rejected or removed copy says
+     "unavailable" during an outage. Needs: a small extra snapshot of recent
+     closed/removed rows (or just their id + department + group_id, enough
+     for the row gate) so the serve path can authorize them, plus their
+     threads in the ESC_SNAPSHOT_ACT_* pack. Budget is the constraint: the
+     Script Properties store is 500 KB total, rows ~48 KB + threads ~48 KB
+     today; cap by recency (e.g. closed in the last 30 days). PHI scope
+     widens again -> update OS #24(c) (SEC-6) and say so to the owner.
+     Tests: escalations-snapshot (pack priority open-first, gate on a closed
+     row, ceiling).
+- **2026-09-30 (escalations + email, branch `claude/broad-scan-gnfpx5`
+  restarted from main after PR #347):** Step 0 SHIPPED on the branch (block
+  207): EML-1 ALL/'*' managers are OPT-IN only for dept-manager email
+  (alerts + new-escalation notice; `ALL_DEPT_NOTIFY_OPT_IN`), EML-2 the admin
+  copy is a separate `[Copy]` message To the admin (the R28 BCC never reached
+  the inbox -- the app sends AS the admin), and the cdr-report DCTR sends the
+  same copy. **Step 1 SHIPPED on the branch too (block 208, ESC-R1):**
+  admin-only "Move…" on pending + in-progress cards (`moveEscalation`), the
+  `reassigned` trail row, the new dept's email, Edit no longer changes the
+  dept; S50. **Step 2a SHIPPED on the branch (block 209, ESC-L1):** linked
+  department copies (multi-select create -> one row per dept sharing
+  `group_id`), the "Also assigned to" card line, "(N linked)" strip label,
+  one email per manager set, Move refuses a dept already holding a copy; S51.
+  **Step 2b SHIPPED on the branch (block 210, ESC-L2):** the group thread
+  tagged by dept, admin edit sync, Link department, soft Remove (read-only
+  for the removed dept, Removed filter), delete-all-linked; S52. Owner said
+  "keep stacking"; all of it later merged as PR #348.
+  The linked-escalation plan is COMPLETE. **Follow-ons SHIPPED (block 211):**
+  ESC-L3 Restore a removed department (back to its prior status) and ESC-S1
+  the Activity threads in the outage snapshot; S53. Merged in #348. **The plan as approved (for reference):**
+  Step 1 (DONE) -- admin-only "Move to department" for pending AND in-progress
+  escalations (resolved/rejected: reopen first; pending_review stays with
+  approve/reject); a `reassigned` activity row "X -> Y by <admin>"; the new
+  dept's managers emailed under NOTIFY_ON_NEW_ESCALATION with the EML-1 rule;
+  the old dept loses access; refused into a dept already in the group.
+  Step 2a -- linked department COPIES: nullable `escalations.group_id`
+  (ADD COLUMN IF NOT EXISTS; restore/backup/external-writer contract
+  unaffected); multi-select create writes one copy per dept in one txn; the
+  card shows "Linked: CSR · in progress, Sales · resolved"; company totals
+  count each copy, labelled "(N linked)"; one email per manager across the
+  group.
+  Step 2b -- the SHARED THREAD: each dept writes only its own copy (INV-55
+  gates unchanged); getEscalationActivity on a copy returns the whole group's
+  activity tagged by dept (the one deliberate read widening, owner-approved
+  incl. author emails); admin edits of patient/caller/Trx/reason/area/time
+  propagate to every copy; "Link another department"; delete-all-linked
+  (admin). **Removing a dept (owner decision (b), 2026-09-30):** NOT a hard
+  delete -- the copy is marked REMOVED with a required reason and actor; its
+  comments/updates STAY in the shared thread, labelled e.g. "Sales · removed
+  from this escalation 9/30 by <admin>: <reason>"; the removal reason is
+  itself a thread entry (disputes are documented, not just mis-assignments);
+  a removed copy leaves that dept's open worklist and counts. **Owner
+  (2026-09-30): the removed dept's managers can still OPEN it READ-ONLY** to
+  see the outcome (every write verb refuses a removed copy; it lists under a
+  "Removed" status filter, not the open worklist).
+- **2026-09-28 (post-merge follow-ups, branch `claude/broad-scan-gnfpx5`
+  restarted from main after PR #344 merged):** SHIPPED BK-1 (Neon backup
+  falls back to a "Dashboard Neon Backups" workbook when policy blocks the
+  `drive` scope; `restoreNeonBackupFile()`), ING-4 (upload trigger imports
+  every unprocessed Call_Legs date oldest first + one-shot catch-up trigger),
+  S2C-5 (Direct busy from ANSWER to stop) + the read-only
+  `previewCallLegShapes` probe, and CB-1 (the per-dept callback table on the
+  Outbound company view, `outboundReport:v5`, S48). **OWED BY THE OWNER:**
+  (1) run `previewCallLegShapes` (cdr-import CDR Tools menu) on a recent date
+  and paste the log -- part A verifies no same-start forks (S2C-5), part B
+  answers S2C-1 (does an answered queue call show the agent as CALLEE on an
+  Incoming leg, or only on their Outgoing talk leg?); (2) S2C-2 RULED YES and
+  SHIPPED (an on-hold abandon during an unanswered transfer -> the target
+  dept's Inbound "Abandoned on hold"; `inbound:v12`, S49) -- the owner wants
+  to eyeball a sample via `sampleTransferAbandons()`. The BLIND-transfer shape
+  was RULED the same day (counts for the target too) and SHIPPED
+  (`inbound:v13`; the company view gains them). (3) click "Back up now" once
+  to seed the fallback workbook.
+  **Where I left off:** all shipped, synced (sync-docs 2026-09-28) and merged
+  (PR #345). (1) came back: no forks (S2C-5 confirmed), and 22/583 answered
+  calls show the agent only on their Outgoing talk leg -- the S2C-1 agentBusy
+  half is now fixed on `claude/broad-scan-gnfpx5` (commit after #345; not yet
+  PR'd). The S2C-2 sample (28 counted, 25 "blind" with long holds) showed the
+  rule also caught AGENTS giving up on a warm-transfer consult; it now needs
+  the caller's call to have ended by the time the attempt did (`inbound:v14`),
+  also unmerged. The owner then clarified that CSRs DROP an unanswered transfer
+  attempt after ~2 min and QCD counts it for the target; ruled "split it":
+  "Abandoned on hold" keeps the caller-hung-up rule, and a NEW "Transfers not
+  answered" tile (S2C-6, `inbound:v15`) counts every internal attempt into the
+  dept's queues abandoned after > 60 s of queue time, linked or not (QCD's
+  rule) -- also unmerged. Owner to re-run `sampleTransferAbandons` after
+  deploying (it now logs both figures); (3) still owed.
+- **2026-09-23 (broad scan + Batch 1, branch `claude/broad-scan-gnfpx5`):**
+  a fresh `/broad-scan` produced ~95 findings in 11 batches (+4 deferred); the
+  owner ruled SEC-5 -> switch `XFrameOptionsMode` to DEFAULT (nothing embeds
+  the app; now in Batch 2) and SEC-6 -> PHI in Script Properties is ACCEPTED
+  (Apps Script is Workspace HIPAA Included Functionality; Batch 10 gets a docs
+  note). **Batch 1 SHIPPED on this branch** (block 195): ENG-1 backup
+  closed-month finalization + tail files, ENG-2 retention held without a clean
+  backup, S2A-1 digest WoW `missed` (unblocks `ANSWER_RATE_FORMULA=answerable`),
+  ENG-11 text. **Batch 2 SHIPPED on this branch** (block 196): S2B-1 role-scoped
+  Access Control save/remove, S2B-2 sign-in reads off the script lock
+  (save-in-flight marker + generation token), SEC-1 `assertReportRangeCap_`
+  (731 d; agent app 366), SEC-3 IR email allowlist, S2B-6 alias rows stored
+  canonically, SEC-5 XFrameOptionsMode.DEFAULT. **Batch 3 SHIPPED on this
+  branch** (block 197, cdr-import only): ING-1/S2C-3 Direct build date + stray
+  legs, S2C-1 first_agent no longer stores customer CNAM (agentBusy half left
+  as a follow-on), S2C-4 NUL strip, ING-6 outbound budget, ING-2 CDR/QCD
+  mirrors after every sheet write, ING-7 CSR repair date/lock/per-row writes.
+  **Batch 4 SHIPPED on this branch** (block 198, all 11 findings): ENG-3
+  alerts readiness gate (DEFERRED/LATE/EMPTY + run marker), DATA-2/DATA-3/
+  S2A-3 no caching of degraded reads, ENG-5 digest/queue-report
+  INTERRUPTED + STALE, ENG-6 EMAIL_BCC validation, DATA-7 freshness re-aged at
+  serve, ING-3 bulk mirror-gap rows, CRT-6 per-sheet sort deferral +
+  STALE-POINTER, ENG-7 NOTIFY-FAILED, ENG-8 manual-blast toasts.
+  **Batch 5 SHIPPED on this branch** (block 199, + the ING-3 daily-mirror
+  follow-on): CRT-1 export tabs delete instead of round-tripping, CRT-7
+  repairs re-verify before writing, CRT-3 identical counts-only dups deduped,
+  CRT-5 keep 6 + no no-op snapshot, CRT-4 upsert keeps Neon's good value for
+  lost sheet cells, CRT-8 + S2B-7 sheet-safe names.
+  **Batch 6 SHIPPED on this branch** (block 200): PCR-1/PCR-2 parent depts
+  roll in children's raw aliases + on-hold labels (inbound:v11,
+  inboundHeatmap:v4, missed:v18, outboundReport:v4), SEC-7 journey fallback
+  gates reasons + drops insurer, PCR-3 pendingTail inclusive + script-TZ,
+  PCR-9 vetting refuses a sheet-served leg, PCR-5 agent-day quoted-name
+  pattern + truncation, PCR-8 snapshot refresh after every escalation write.
+  **Batch 7 SHIPPED on this branch** (block 201, client only + one server
+  change): UI-1 capture-phase Escape layer stack (Help / chart tips / call
+  path), UI-2 Help + call-path re-arm the outer trap and scroll lock (the
+  call-path `offsetParent` check never re-armed), UI-3 YTD endpoint honors
+  view-as and the client keys its YTD cache by scope, UI-4 Escalations init
+  failure clears the loader + Retry + beacon, UI-5/6/7/11 sequence tokens /
+  drill key / per-flag close guard, UI-8 aria-labels, UI-9 insurer-row
+  disclosure button (trp-row deliberately unchanged -- it jumps, not
+  expands). ui-harness gained `__HARNESS__.failOnce`.
+  **Follow-ons SHIPPED on this branch** (block 202): report Export menus stop
+  Escape (`wireMenuKeys_`), trp-row action description, Escalations init
+  in-flight guard, view-as usage logs the real admin, journey predicate +
+  sheet mirrors match Final Dept Labels, Dept Config qcdQueues sheet-safe,
+  `ALERTS_STARTED` -> alerts INTERRUPTED. **CRT-4 on the dup-guard re-mirror /
+  deferred mirror is CONFIRMED but NOT fixed** -- the INV-16 writer conflates
+  lost and empty cells as NULL, so it needs a lost-cell channel (design in
+  block 202); unscheduled.
+  **Batch 8 SHIPPED on this branch** (block 203, + the qcd-expandable a11y
+  tidy-up): S2B-3/S2B-4 orphan rename audits before Neon + Neon-only retry,
+  PCR-7 coaching lock + status guard, SEC-2 per-user report-email throttle,
+  S2B-8 queue-report send claim, ENG-4 alerts run claim (busy -> retry),
+  SEC-4 login-notify byte cap, ING-5 RETENTION_HOLD + importer, S2A-5 digest
+  stale text + preview gate, S2A-4/ENG-10 CacheWarm keys.
+  **Batch 9 SHIPPED on this branch** (block 204): DATA-5 computeSummary_
+  reads through the memoized sheetFetchDqeRows_, DATA-6 orphan nag
+  span-bounded + reuses the Overview's rosters, S2A-2 Company chart line spans
+  the 90-day window (companyOverview:v25), DATA-8 Feb-29 trend start.
+  **Batch 10 SHIPPED on this branch** (block 205, + the Batch 9
+  follow-ons): IR + Insights read through the memoized sheetFetchDqeRows_
+  (computeActiveAgentsInRange_ + Alerts deliberately left on the span),
+  getOrphanFixInit reads rosters once, DOC-1..DOC-15 doc drift (INV-01
+  carve-outs, access model, AI backfill, 6 h caches, QCD comments + new-dept
+  runbook, "Batch N" collision note, counts), DOC-14 deploy.sh records a
+  dirty-tree deploy as `<sha>+dirty`, SEC-6 accepted-PHI note (#24(c)).
+  **Batch 11 SHIPPED on this branch** (block 206, the flag-flip
+  prerequisites): DATA-1 the B-1 fall-open verdict reads the dept's ROSTER
+  rows (every caller agrees), S2A-1's queue-split half (the digest WoW
+  narrows, via sheetFetchDqeRows_), CRT-2 the duplicate merge NULLs Neon's
+  queue_split + after-hours for its keys, S2B-5 Dept Config saves under
+  CONFIG_SOURCE=neon mirror to the sheet (warning on a failed mirror).
+  **WHERE I LEFT OFF:** ALL 11 broad-scan batches + the follow-ons pushed,
+  NOT deployed. Next: deploy the dashboard + cdr-import + cdr-report, run
+  "Back up now" once, check the Health page's `historical-sort` /
+  `email-bcc` rows. The plan's Deferred list (S2C-2, S2C-5, ING-4, DATA-4)
+  needs owner rulings / live data. `QUEUE_SPLIT_SCOPE=dept` and
+  `CONFIG_SOURCE=neon` no longer have a known code blocker -- each still
+  flips only through its own Operator State checklist (#42 / #25). The
+  per-dept callback table stays the next FEATURE (entry below).
+- **2026-09-23 (later): the TALK-time test is built.** The redeployed scorer
+  found talk 8-79 s -> machine at 92% balanced accuracy on run 20260922-1313
+  -- IN-SAMPLE, and with no person call under 62 s in that ring-drawn sample.
+  The rule is now PRE-REGISTERED (`OB_REVIEW_TALK_RULE_`, pinned) and
+  `sampleOutboundCallsForReviewByTalk()` draws a fresh ~46-call sample in six
+  talk bands weighted to the rule's edges; the scorer detects a talk run and
+  scores only the fixed rule (both failure modes, 70% lower-bound bar).
+  **Owner next:** deploy, run the talk sampler, label, score. Research only --
+  nothing reaches the reports. The E-control question (unconnected rows heard
+  as human) is still open.
+  - **WHERE I LEFT OFF (the one current line -- older "left off" notes below
+    are history):** nothing half-built; the answer-quality thread is now the
+    OWNER's research loop, not queued code. **NEXT PIECE OF WORK
+    (owner-confirmed 2026-09-23): the per-dept CALLBACK table** --
+    `docs/outbound-callback-dept-plan.md` Part 1 + sequence step 5, with the
+    2026-09-15 owner rulings (rank by the OWN-dept called-back column; rows
+    own / another dept / not called back summing to trackable abandons; the
+    per-dialing-dept matrix as a row EXPAND; sub-queues via `queuesForDept_`;
+    crossover / unrostered / no-agent columns explicit from the first commit;
+    `outboundReport:v4` -> `v5` -- v4 was taken by broad-scan Batch 6). Unblocked: it ranks by called-back, needs
+    no classifier, and any connected column inherits `OB_CONNECTED_DEF_`
+    (`docs/next-steps.md`). Start with `/plan` against that plan doc. **Standing
+    operator items:** deploy the dashboard + walk S46 (new "Callbacks
+    connected" wording); run the talk sampler; check the E rows' recording
+    start vs row time; set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS`
+    = `1680000` (#70); set `ANSWER_RATE_FORMULA=answerable` (#69); delete
+    `PerformanceReport.gs` in the web editor (INV-17); walk S39 + S41.
+- **2026-09-23 (answer-quality CONCLUDED, same branch; PR #341 merged):** the
+  owner labelled 53/54 rows of `Review 20260922-1313`. Population-weighted,
+  voicemail is ~40% of connected calls, its share RISES with ring (~30% ->
+  42% -> 65% -> 80%) without splitting, and a `>= 20 s` rule would catch only
+  ~37% of it at ~65% precision. **Owner + I concur: the CDR cannot separate a
+  person from a machine; only audio can.** Step 2 (`OUTBOUND_VM_RING_SEC` /
+  `strict`) is superseded unless the talk-time check passes on a FRESH sample.
+  - **Shipped this round:** the scorer's inconclusive branch now says whether
+    listening CAN settle it (`rowsToDecide`; 13/20 needs ~350 rows, 50-60%
+    never), it returns the `byBand` / `recallCeiling` / `shoulder` findings it
+    used to drop, and it compares TALK time by label (in-sample best window,
+    85% balanced-accuracy bar).
+  - **Open:** the E control failed (2 human + 1 voicemail on unconnected rows)
+    -- probably the agent+time lookup landing on the redial; the owner is to
+    check recording start vs row time. (The talk comparison has since run:
+    see the entry above.)
+  - **SHIPPED (owner rulings):** the word stays "Connected" ("Picked up"
+    rejected as more misleading) but is DEFINED everywhere via
+    `OB_CONNECTED_DEF_`; "Actually reached" -> "Callbacks connected" (upper
+    bound, tile / caption / email); **no audit figure on any surface** -- the
+    owner keeps auditing raw calls as research only. Plan Steps 2-4
+    superseded; the per-dept callback table is unblocked.
+- **2026-09-22 (answer-quality ground truth, branch `claude/jolly-hamilton-n5fs2o`):
+  PRs #338-#340 MERGED; nothing unmerged except this sync-docs pass.** The
+  #64/#65 thread moved from measurement to LABELLED evidence, and the evidence
+  is running against the ring method:
+  - **#65 CLOSED** post-deploy, `carrier-instant` over 66,042 connects -- but
+    that says the ring is TRUTHFUL, not that a person answered.
+  - **Band fallback shipped** (`obProbeRingBand_`), with a `band-impure` gate:
+    the measured 20-32 s band has a ~69% PRECISION ceiling.
+  - **Step 1b review audit shipped and streamlined**: `sampleOutboundCallsForReview`
+    (blinded worksheet into a separate `OB_REVIEW_SS_ID` workbook, 54 calls over
+    six strata that TILE the ring space) + `scoreOutboundReviewSample` (Wilson
+    interval on the INTERVAL, partial findings on partial labels, voicemail+ivr
+    as NOT-REACHED). New INV-01 carve-out, registered.
+  - **Owner ground truth (5 raw calls + 12 sheet labels)**: voicemail at 8 / 18 /
+    22 s, a human at 4 s, a screening service that connected then took a
+    message. So there are FOUR ways to reach a machine and only TIMEOUT voicemail
+    has a ring signature -- the method has a RECALL ceiling on top of its
+    precision ceiling, and the error inflates `reached`.
+  - **Defects the labels found in my own tooling, all fixed:** a 12-19 s hole in
+    the strata (a real voicemail sat in it); A/B wired as human controls whose
+    "failure" downgraded C; findings computed BELOW the C guards so partial
+    labelling returned nothing; `ivr` counted as neither hit nor miss; no
+    labelling convention for a call that is several things in sequence (now:
+    LABEL THE TERMINAL OUTCOME, on the sheet). Also: the probe SQL is never
+    executed by any test (mocked conn) -- source pins now cover the new
+    sub-selects.
+  - **(SUPERSEDED 2026-09-23 -- labelling finished, Step 3 moot.) WHERE I LEFT OFF was:** the owner is labelling run `Review 20260922-1313`
+    (12 of 54 done). Next is to score it (A+B first, it measures the recall
+    ceiling alone), then the **Step 3 precedence ruling**, and `strict` stays
+    off. Standing operator items unchanged: the two cdr-import time limits
+    (`1680000`), `ANSWER_RATE_FORMULA=answerable`, delete `PerformanceReport.gs`
+    in the web editor, walk S39 + S41.
+- **2026-09-21 (post-Batch-9 owner round, branch `claude/jolly-hamilton-n5fs2o`):
+  the broad scan is DRAINED and MERGED (PRs through #337); this region's
+  Batch 1-9 / DD-2 / H1-H3 entries below are history now, not open work.**
+  Only `d1cfb1b` (a docs correction) sits unmerged on the branch. Nothing is
+  half-built. What happened after Batch 9, in order:
+  - **CLAUDE.md split again (`fe82ef5`)**: the eight Neon mirror + read-back
+    bullets became `docs/neon-layer.md`, and the Operator State INDEX was
+    compressed to true one-liners (five items had been re-telling their own
+    doc). ~20 KB recovered with no rule deleted; every dropped reference was
+    verified to still resolve. The file was at 97% of the 200 KB cap.
+  - **H2's PREMISE was wrong, and the probe said so (`239f6b3`).** I had
+    recorded the answer-rate risk as the DENOMINATOR (`answered / rung` vs
+    `answered / answerable`). `probeAnswerRateFormulas()` measured 16 depts x
+    30 days: the two denominators agree to within **0.007 pts**, because every
+    window leg carried exactly one disposition. What actually drifts is
+    ROUNDING. The equality is EMPIRICAL, not structural, so the H2 bullet now
+    says so -- a third disposition in the feed would dilute `answered / rung`
+    silently. `ANSWER_RATE_FORMULA=answerable` is measured safe to set.
+  - **Two production Alerts defects, both owner-reported (`caf1929`).** (1) The
+    Low Answer Rate dept picker had nothing to pick -- it read
+    `USER.departments`, which for an ADMIN is not the dept list; the server now
+    ships `departments` and the client prefers it. (2) A config save re-rendered
+    the ENTIRE modal. Fixed by extracting `alertConfigSection_()` -> `{config,
+    drift, departments}` and re-reading it AFTER the LockService lock releases,
+    with `sectionStale: true` when the re-read throws (only then does the client
+    fall back to a full `alLoadInit_()`). **The same `sectionStale` pattern is
+    owed to Dept Config x2 and Access Control x4 -- deliberately not built.**
+  - **Company aggregate line on the Overview trend (`161ac06`).** On the two
+    PERCENTAGE metrics only: a company "answered calls" line just restates the
+    visual sum of the dept lines. It takes `THEME.text` and a 3px solid stroke,
+    NOT a categorical hue -- an aggregate series must not read as one more
+    identity. It is **ADMIN-ONLY by INV-39 precedent, not by owner request**;
+    widening it is ~3 lines plus a driver flip, and needs a ruling.
+    `companyOverview:v24`, `overviewChartYtd:v3`, and a SECOND Overview strip
+    (`ovStripChartTrend_`) -- `personalizeOverview_` does not cover that
+    payload, so INV-39 now names both.
+  - **The execution ceiling is MEASURED (`e32c317`): ~1794 s (~30 min), not
+    ~6.** Set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS` to `1680000`
+    (28 min) in cdr-import Script Properties -- no redeploy. The probe's OWN
+    advice was backwards in the measured case ("treat every 30-min ceiling
+    comment as wrong" fired on a 30-min measurement); `execCeilingVerdict_`
+    now derives `settles` from the reading instead of asserting it.
+  - **THE SESSION'S LESSON -- the outbound instant-connect marker
+    (`f305873` -> `113537d` -> `76d0da4` -> `f13ef2f` -> `3bfe232`).** A
+    diagnostic I built to decide the fix by measurement then CONTRADICTED the
+    marker it had recommended: `probeOutboundInstantConnects` flipped from
+    `carrier-instant` to `connected-timestamp`. I reported the flip and refused
+    to let the owner act on either reading. Eliminated in order: the two
+    implementations per-journey (3000 randomized), the same multi-row (300
+    rows -- my first sweep fed one journey per call, so an accumulation bug
+    would have been invisible), byte-identical SQL/`base`/binding, the current
+    code live (`_whichMarker` = 27), no remote orphans. **Root cause: P-11
+    shipped 2026-09-17 and made `icBuildJourney_` mask a CALLEE-external leg's
+    CNAM to initials, so the two probe runs straddled a CAPTURE CHANGE** -- the
+    09-18 run saw 0 `initials`, the 09-21 run 300. My 09-18 fallback was
+    reading the residual leg on post-P-11 rows. The reader now prefers the
+    masked leg and keeps the first-`unknown` fallback for pre-P-11 rows;
+    `carrier-instant` is CONFIRMED on the post-P-11 answer key (rung 27 s /
+    100% talk, instant 1 s / 0%). **The rule, now in Operator State #65: a
+    reader keyed on a journey NAME is keyed on a capture convention, and this
+    repo changes those -- when a marker and its own recommending diagnostic
+    disagree across two runs, check whether the capture moved before auditing
+    either implementation.** This is the SIXTH "verification tool contradicts
+    what it verifies" incident here (F24, R8-D4, F-13, the outbound marker, the
+    ceiling probe's prose, this); all six are cross-referenced.
+  - **Two of my own stale claims corrected, one of them twice.** Operator State
+    #65 and `docs/per-call-capture.md` first carried the pre-P-11 reasoning
+    ("no masked name shape exists in the blobs at all") as settled fact off a
+    SINGLE run; `3bfe232` fixed those and `d1cfb1b` fixed the `next-steps.md`
+    follow-on it missed. Lesson worth keeping: a verdict recorded off one probe
+    run needs the run's DATE attached, because the capture underneath it moves.
+  - **`/sync-docs` applied (`d8b9993`, `8bf305d`)**: the client accessibility +
+    print contract, the twelve-sheet `setup()` count, the deploy gate wording,
+    the E10 `alertConfigSection_` seam, the config-section re-render and
+    server-fed-picker conventions, INV-39's two strips, and a new
+    `getOverviewChartTrend` row in `docs/architecture.md`.
+  - **THE #64/#65 OUTBOUND THREAD IS CLOSED (2026-09-21, post-deploy).** The
+    dashboard is deployed and `probeOutboundInstantConnects` verdicted
+    `carrier-instant` on the full population: 66,042 connected single-attempt
+    calls, 26,804 instant (40.6%), `noExternalLeg: 0` on BOTH sampled groups
+    (it was 300 misses on the 09-18 run -- that zero is the era fix working),
+    instant median 1 s at a 0% real-ring share against the rung control's 27 s
+    at 100%. All three supporting cuts agree: talk medians FALL as ring rises
+    (105 / 65 / 36 s, so instant rows hold the LONGEST calls and are not
+    drops), the share is flat 39.3-42.7% on all 19 business days (no
+    config-change date), and it is spread across 168 agents. **Consequence for
+    the work still queued: a voicemail classifier must EXCLUDE the instant
+    population and DISCLOSE the ~59% remainder as its reachable coverage --
+    and #64's ~22% band share was measured over ALL connects, so it must be
+    re-derived over that remainder rather than carried forward.** Recorded in
+    Operator State #65 (incl. the trap in the concentration list: the top-5
+    agents at 89-100% instant have only 28-40 calls each against a ~393-call
+    average, so those rates are noise -- the un-concentrated verdict rests on
+    the VOLUME share, 9.9% vs a 3.0% even baseline).
+  - **OPERATOR OWES (none blocking each other):** ~~(1) deploy + re-run the
+    instant-connect probe~~ DONE 2026-09-21, above; (2) set the two cdr-import
+    time limits to `1680000`; (3) set `ANSWER_RATE_FORMULA=answerable`;
+    (4) delete `PerformanceReport.gs` in the Apps Script WEB EDITOR (INV-17);
+    (5) import 2026-09-18's data; (6) walk S39 + S41 by hand.
+  - **WHERE I LEFT OFF / next code work:** the scan's fix batches are drained,
+    so the queue is `docs/next-steps.md`'s own order -- **Batch 6c (Outbound
+    report: CODE DONE, RELEASE PENDING** -- backfill, `runOutboundVettingCheck`
+    CLEAN, flip `OUTBOUND_VETTING_GATE_`, walk S46), then the Neon storage
+    decision (operator), then Batch 5 (timezone split, gated). Deferred owner
+    decisions still open from the scan: A-2 revocation model, A-3 audit home,
+    M-1 retention line, plus the Company-line visibility ruling above.
+  - **NOTE ON THIS FILE:** the dated `## Increment` log at the BOTTOM stops at
+    2026-09-09 (R45) by convention, not by neglect -- since the broad scan,
+    sessions append to this OPEN NOW region (newest first) and the blocks under
+    `.cycle/blocks/` carry the per-session detail. Block numbering RESTARTED at
+    100 after 194, so `100`-`109` are newer than `188`-`194`.
+- **2026-09-18 (Batch 9, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 21 interface-structural items implemented (C1-13..C1-18, C2-9..C2-13, UD-1..UD-10) -- client-only: keyboard parity on the sub-queue group header + the 41 report sort headers (`srtApply_` now sets `aria-sort`), role=button off the two `<tr>`s onto inner buttons (fragment sweep pinned), the tour + chart-tips focus traps with focus return, tiles described not labelled, named dialogs + live notices, one global `:focus-visible` ring (no `outline: none` anywhere -- pinned), `--on-good`/`--on-warn` on-fill tokens, phone breakpoints, buttons (out of the tab order) for the missed-list cross-links, the scope button out of `<summary>`, retired print CSS gone + global print hides, `<h3>` section titles, labels/tablist/fieldset fixes. Block: `.cycle/blocks/109-broad-scan-batch9-broad-implement.md`. 1696/1696 green under TZ=America/Chicago, lint clean, 9 pins bite-checked, ci:ui PASSED (285 assertions; the first run caught the S39 tile assertion still expecting the removed aria-label -- drive-f13 now asserts the description wiring). Deploy the dashboard; walk S39 + S41 after. Docs: /sync-docs pending (E-8 house rule in client-ui-conventions, tour focus trap, README deploy wording from Batch 8). Where to resume: the scan's fix batches are DRAINED (Batches 1-9 implemented); remaining are the deferred owner decisions (A-2 revocation model, A-3 audit home, M-1 retention line) and /sync-docs.
+- **2026-09-18 (Batch 8, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 7 deploy/test-hygiene items implemented (T-5, T-7, T-8, T-9, A-4, A-5, A-6) -- deploy.sh runs all three CI jobs with CI=1 (missing tools FAIL); explicit OAuth scopes in the dashboard / cdr-report / cdr-import manifests pinned by the new `manifest-scopes` suite (OPERATOR: re-consent once per project after the push, Operator State #9); the two weekend-skipping suites pin a weekday clock; drive-smoke asserts a positive drawn-canvas floor; sheetSafeCell_ on the four remaining config writers; the IR email validates PNG bytes / size / subject and surfaces the registered-address read error; the uncached auth read takes the script lock. Block: `.cycle/blocks/108-broad-scan-batch8-broad-implement.md`. 1686/1686 green, lint clean, 6 pins bite-checked. Where to resume: Batch 9 (interface structural: C1-13, C2-10, C2-11, UD-1…UD-10), then /sync-docs.
+- **2026-09-17 (Batch 7, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 18 mirror / invariant / doc-truth items implemented (P-5, DD-6, DD-5, A-7, A-8, P-10, O-7, T-1/T-2/T-4/T-10, T-3, T-6, C1-11/C1-12, OD-8, DD-8) -- queueSplitSample.js is the pinned SIXTH mirror (per-queue floor + R18e fallback); the sidebar's col-G rows 36/40 carry the pipeline's status gates (pinned both sides); qcdDqeDiagnostic reconciles rows 35/36/37 PER AGENT against the real calcQcdReport; expandDeptsWithSubQueues_ fails closed on an errored Dept Config read; setup() heals blank header cells (`healSheetHeaders_`); module-dependencies.md regenerated with `--check` in CI; CLAUDE.md's five largest bullets trimmed into fix-history + a 90% warning diagnostic (file still ~97% of the cap -- pair every added clause with a cut); F24 / F-13 / R27(x2) / R28 / R29 / R30 now in fix-history. Block: `.cycle/blocks/107-broad-scan-batch7-broad-implement.md`. 1667/1667 green under TZ=America/Chicago, lint clean, INV-16 + module-deps clean, 7 pins bite-checked. Deploy all three projects; re-run `setup()` once afterwards (OD-8 header healing). Docs: /sync-docs pending (known-issues / architecture restatements). Follow-up (2026-09-18): `queue-split-sample.test.js` drives the sample tool against the REAL build (the fake sheet gained `getDataRange`); /sync-docs applied (known-issues setup() paragraph -> twelve sheets + OD-8 healing; Operator State #66 gains the DD-5 per-agent clause). 1670/1670 green. Where to resume: Batch 8 (deploy/test hygiene: T-5, T-7, T-8, T-9, A-4, A-5, A-6), then Batch 9 (interface structural).
+- **2026-09-17 (Batch 6, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 8 cache / retention / Neon read-path items implemented (D-5, OD-4, D-4, D-7, D-3, D-8, OD-3, OD-5) -- a thrown QCD snapshot read never pins a cache; dqe_history retention 25 months; the Neon DAL fetch memoized per execution; roster hash on the summary / individual_active keys; combined duration means weighted by non-zero counts; Insights MTD follows the window end (`insights:v24`); every dashboard Neon read metered (new `neon-egress-coverage` sweep); pruned journeys disclosed in the drill. Also earlier this session: the cdr-report Script Property registry (e5ab6d0). Block: `.cycle/blocks/106-broad-scan-batch6-broad-implement.md`. 1659/1659 green under TZ=America/Chicago, lint clean, ci:ui PASSED, 8 pins bite-checked. Deploy the dashboard; watch `NEON_STORAGE_CAP_MB` / `NEON_EGRESS_BUDGET_MB` afterwards. Docs: /sync-docs pending (read-back bullet, span/memo bullet, cache-tiers decision, sub-queue weighting clause, #57/#47, fix-history). Where to resume: Batch 7 (mirrors, invariants and doc truth: P-5, DD-6, DD-5, A-7, A-8, P-10, O-7, T-1/T-2/T-4/T-10, T-3, T-6, C1-11/C1-12, OD-8, DD-8).
+- **2026-09-17 (Batch 5, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 14 pipeline-safety items implemented (P-1, P-3, P-2, P-6, P-9, P-13, P-7, DD-4, P-4, P-12, DD-7, P-8, P-11, OD-6) -- the force path writes its non-destructive outputs before the five-sheet delete; the execution ceiling is MEASURED (`execCeilingProbe.js`, CDR Tools) and the bulk / inbound-backfill budgets are Script-Property-tunable; the deferred mirror treats a pruned per-call source as a per-type terminal and never counts an outage as an attempt; DDL runs in autocommit before every mirror transaction; ONE history-date resolver keyed in the sheet TZ; the DQE build drops stray-day legs; the nightly sort refuses all-text date columns. Block: `.cycle/blocks/105-broad-scan-batch5-broad-implement.md`. 1641/1641 green under TZ=America/Chicago (run the suite with that TZ, as CI does), INV-16 clean, lint clean, 8 pins bite-checked. **Operator after deploy: run the ceiling probe once and set `BULK_TIME_LIMIT_MS` / `IC_BACKFILL_TIME_LIMIT_MS` if it reads 6 min.** Deploy cdr-import + cdr-report + the dashboard. Docs: /sync-docs pending (operator-state #70, the mirror + write-discipline bullets, fix-history). Where to resume: Batch 6 (cache / retention / Neon read-path headroom: D-5, OD-4, D-4, D-7, D-3, D-8, OD-3, OD-5).
+- **2026-09-17 (Batch 4, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 17 client dead-end / stale-state items implemented (C2-1, C1-1, C2-2, C1-2, C2-3, C1-4, C2-4, C1-6, C1-9, C1-5, C1-7, C1-8, C1-10, C2-6, C2-7) plus D-6 (combined grand total carries daysActive/ansPerDay via a non-enumerable day set unioned in `combineSummaries_`) and D-9 (`primary` is always the requested dept, so 'subs' scope ships the parent's qcd). New `tests/unit/client-dead-ends.test.js` (source pins on the fragment changes). Block: `.cycle/blocks/104-broad-scan-batch4-broad-implement.md`. 1619/1619 green, lint clean, INV-16 clean, 5 pins bite-checked, **`npm run ci:ui` PASSED here** (playwright installed into tools/ui-harness with `npm i playwright`; the earlier entries' "cannot run in this container" note is stale). No operator step; deploy the dashboard (Data.gs + eight fragments). Where to resume: Batch 5 of the scan plan.
+- **2026-09-17 (DD-2 + Batch 3, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** owner agreed on the H2 formula but wants the probe first. Shipped: every server rate through `Config.gs::answerRatePct_` behind `ANSWER_RATE_FORMULA` (DEFAULT 'rung' = no number moves on deploy; 'answerable' = H2), four rate caches suffixed `rf-<formula>`, `probeAnswerRateFormulas()` (Diagnostics.gs) printing both rates per dept + verdict flips; O-2 digest gate on the last business day; C1-3 chips through `datePresetRange_` + tripwire; C2-5 report defaults end on the latest data day; C2-8 agent chip honesty + inline validation; O-6 doc. Block: `.cycle/blocks/103-dd2-batch3-broad-implement.md`. 1601/1601 green, lint clean, 4 pins bite-checked; ci:ui NOT run here (playwright absent; three fragments changed -- run before deploy). **Operator: deploy, run the probe, then set `ANSWER_RATE_FORMULA=answerable` (Operator State #69).** Where to resume: Batch 4 (client dead ends: C2-1, C1-1, C2-2, C1-2, …).
+- **2026-09-17 (Batch 2, same branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** all 11 observability items implemented -- the OPS-8 classifier is now ONE table (`healthOutcomeIsBad_` + `HEALTH_BAD_PREFIXES_`, SystemHealth.gs) with `stale` / UNPARSEABLE / SKIPPED-LOCK added and a holiday credit on the STALE allowance; CacheWarm all-failed = FAILED-ALL; NeonCoverage missing sheet = probe error; retention-risk warns on a probe error; both watchdogs record their own throw; alerts + the three digest cadences have Health outcome rows (new `ALERTS_LAST(_RESULT)`); the digest lock-skip records SKIPPED-LOCK; DQE-silence streaks carry a per-date claim; the beacon cap is announced once per window + a `client-beacon` row. Block: `.cycle/blocks/102-broad-scan-batch2-broad-implement.md`. 1591/1591 green, lint clean, 5 pins bite-checked. Deploy the dashboard (no operator step). Where to resume: DD-2 (owner decision pending), then Batch 3 (O-2 digest freshness gate, C1-3 preset tripwire, C2-5, C2-8, O-6).
+- **2026-09-17 (broad-scan + Batch 1, branch `claude/jolly-hamilton-n5fs2o`, MERGED to main):** a full three-stage broad scan (110 findings; the report is in the session, not the repo) and Batch 1 implemented: A-1 (agent role could reach the vetted reports' admin branch on release -- allowlist now), D-1 (DST MTD month start on the sheet path), D-2/DD-3 (IR deptStats + share over the whole roster, INV-26 R18; `individual:v12`), DD-1 (coerced slot render keyed at the wrong hour). Block: `.cycle/blocks/101-broad-scan-batch1-broad-implement.md`. **DD-2 (two Answer % formulas across surfaces) was STOPPED as larger than sized** -- the inventory + suggested shape are in the block's Follow-on. Deploy the dashboard; the A-1 fix must be live BEFORE `OUTBOUND_VETTING_GATE_` flips (#63) or `AGENT_ROLE_ENABLED` is set (#46). Where to resume: DD-2 as its own session (needs the owner's one-line confirmation of the H2 formula as dashboard-wide), then Batches 2-9 of the scan's plan.
+- **2026-09-17 (cross-repo H1/H2/H3 sessions, branch `claude/inspiring-volta-7u9szs`, MERGED to main):** H1 the `Company Holidays` sheet (#27), H2 the published `Dashboard Standards` sheet for team-tools (#37/#68), H3 the Escalations Phase-2 "live" claim retired (designed, unbuilt) and four infrastructure ports from team-tools (`npm run lint:gas` + the CI `lint` job, the duplicate-top-level-name pin, `scripts/bite.sh`, the Health `trg-quota` row). Block: `.cycle/blocks/100-h3-bridge-infra-broad-implement.md`. Deploy the dashboard (Setup/Util/Alerts/DeptConfig/SystemHealth/Escalations changed) and re-run `setup()` once to create + publish the two new sheets. Where to resume: the queue/dept vocabulary publish (the H2 pattern) is the last mirrored config between the repos; the M-sized infrastructure items are listed in the block's Follow-on section.
+- **THIS SESSION (2026-09-16): the CSR "Misc" discrepancy is CLOSED, the work
+  window changed, and two Overview/My-Dept control fixes shipped. PRs
+  #319-#327, all merged; branch fast-forwarded onto main, nothing unmerged.**
+  In order:
+  - **The owner's question is ANSWERED: no agent is under-credited.** CSR's
+    QCD "Queue Calls" answered (414 on 2026-09-14) and the per-agent sum (397)
+    differ because 396 of those legs are a SECOND VIEW of calls already
+    counted; the 18 remainder are 12 pre-window + 4 internal-direct + 2
+    in-window non-queue. 396 + 12 + 6 = 414. Corroborated by a per-agent
+    cross-tab (deltas within ±2 for ten of eleven agents). The tool that
+    proved it is `diagnoseQcdVsDqe` (Operator State #66).
+  - **R49 SHIPPED: the CSR queue family's work window floors at 6:00 AM PST**
+    (`A_Q_CSR` / `A_Q_Intake` / `Backup CSR` / `A_Q_Spanish`), per queue, symmetric
+    on answered and missed, evening deliberately untouched. INV-06 carries the
+    contract and the three pinned copies. **NOT retroactive** -- see below.
+  - **The census (Operator State #67) cleared it, but only after correcting
+    ITSELF.** Its first live run reported 146 legs on ext 782 as a loss and
+    held the change for a day; the by-extension section then named the takers
+    as `Sunil Kurian` / `Rajesh Patel`, both on `DQE_EXCLUDED_AGENTS`, so the
+    build drops those legs at the next gate regardless. The census now reports
+    `counted` (would-have-counted) per extension and only THAT blocks. **Read
+    "Would have counted", never the raw leg count.**
+  - **R50 / R51 (Overview + My Department controls).** The Overview Window
+    selector gained 60d + 90d so its options cover the chart's ranges, and
+    picking a window moves the chart (one-way: the reverse would re-fetch the
+    agent table on every trend glance). `companyOverview:v22`->**v23**. The two
+    My Department side panels now list their periods in the same left-to-right
+    order, with their DIFFERENT defaults pinned so a reorder cannot move them.
+  - **`npm run ci:ui` RUNS IN THIS ENVIRONMENT** -- playwright is installed
+    (the owner installed it 2026-09-16). Several earlier blocks in this file
+    say it could not run and that deploy.sh's gate had to be run elsewhere;
+    **that is now stale**. Run the full gate before any dashboard deploy.
+  - **OPERATOR, in order:** (1) `cd apps-script/cdr-import && clasp push -f`;
+    (2) `cd apps-script/cdr-report && clasp push -f` (the INV-16 twin + the
+    drill-down); (3) dashboard `scripts/deploy.sh .` + new version.
+    (4) **Re-run the census** and confirm it now reports `Would have counted:
+    0`. (5) **Backfill R49** -- it is NOT retroactive; a stored DQE row keeps
+    its old numbers until its date is rebuilt (force re-import inside the
+    14-day `Call_Legs_*` window, source re-import first for older dates, #56).
+    Fold it into the same pass as the queue split (#40) and AJ/AK (#60).
+    (6) One optional check that would close the last open thread: confirm no
+    `Agent Alias Overrides` row rewrites `Sunil Kurian` or `Rajesh Patel` to a
+    roster name -- that is the single assumption behind the ext-782 verdict.
+  - **R49 CONFIRMED LIVE (2026-09-17), via a bug in my own tool.** The first
+    `diagnoseQcdVsDqe` run after deploy read INCONCLUSIVE: five agents exactly
+    +2 stored vs mirror, and the ten "orphans" were all 6:03-6:27 AM on the
+    CSR family -- the stored rows had R49, the diagnostic's DQE mirror still
+    floored at 6:30. The FIFTH hand-mirror, drifting like the other four, one
+    day after I shipped the rule. Fixed: it now floors through the build's
+    `dqeWindowStartForQueue_` (no copy), cross-file-pins fails on a bare
+    `DQE_WINDOW_START` in it, and its suite drives the REAL build against the
+    mirror (source pins on copied text cannot see a rule the build GAINED).
+    396 + 10 = 406 stored; for 2026-09-16 the QCD-block-vs-DQE gap is 407 vs
+    406. The census read clean (`Would have counted: 0`).
+  - **Next code work is unchanged:** the #64/#65 outbound 0-1s investigation
+    (below) and the 6c release gate. Nothing from this session is half-done.
+- **PROBE RUN + DETECTOR FIXES (2026-09-15, block 194).**
+  `probeOutboundAnswerQuality` RAN live (2026-08-18..09-14, 66,207
+  single-attempt connects) and returned **INCONCLUSIVE — correctly**. The
+  distribution is not the single tight spike the plan hypothesised: FOUR
+  spikes (17s / 21s / 27s / 31s, ~5–6s apart = ring-cadence harmonics), a
+  hard cliff at 32→33s (99.3% of connects ring ≤32s), and **40.6% of
+  connects ringing 0–1s** (17,197 at exactly 0s; the repeat check's biggest
+  cluster is 3,446 callee-groups connecting at 0s repeatedly). Block 194
+  fixed two real defects the run exposed — the talk-trough detector searched
+  only below the mode and so answered 'mode-at-floor' on a distribution with
+  a genuine 20s trough, and a refusal produced no ring×talk cross-tab at all
+  — plus a rounding bug that printed "only 8% (need 8%)".
+  **NEXT, and it is (c): investigate the 0–1s population.** No ring-based
+  classifier can exceed ~60% of calls until that is understood, so Part 2
+  step 2 stays parked. The gates were NOT loosened and must not be.
+- **THE SEQUENCED ROADMAP IS `docs/next-steps.md` (2026-09-11).** Batches
+  1–5 + parallel track + follow-ons, with the why-this-order. Read it before
+  starting new work; this section carries only the per-session state.
+- **BATCH 6: 6a + 6b DONE (2026-09-14, block 191, branch
+  `claude/gallant-meitner-mtuj55`); 6c + 6d STILL QUEUED.** Full design + the
+  owner decisions are in `docs/next-steps.md` Batch 6.
+  **6a SHIPPED** -- the in-app queue report now pins the viewer's own section
+  and orders the rest worst-first by the EMAIL's comparator, through ONE pure
+  helper `qcdAllDeptSections_` (script-11-qcd-boot) that the table AND the CSV
+  both call; the CSV previously rebuilt its own grouping and ignored even the
+  pre-6a viewer float, so an export disagreed with the screen it came from.
+  Client-side, so no `qcdAll` bump. The stale "worst-first is EMAIL-ONLY"
+  header comment in QueueReportEmail.gs is updated, and the ride-along landed:
+  its alert/preheader offender list sorted violations-then-pct, the reverse of
+  its own table, so the alert could name a different "worst" queue than the
+  table ranked first.
+  **6b SHIPPED** -- Overview chart "Answered calls" metric. ONE discovery
+  beyond the plan: the chart has TWO separately-cached payloads (the 90-day
+  Overview blob and the on-demand YTD fetch), so TWO prefixes were bumped,
+  `companyOverview:v21`->v22 AND `overviewChartYtd:v1`->v2. Bumping only the
+  blob would have served a warmed YTD payload with no answered series for its
+  TTL.
+  Both are dashboard-only and need a dashboard deploy (`scripts/deploy.sh .`)
+  to reach users; `npm run ci:ui` could not run in that session (no
+  playwright) and deploy.sh gates on it, so run the deploy where it can.
+  **6c** Outbound is a RELEASE, not a
+  build -- it is fully shipped behind a hard-coded admin gate and only phase 4
+  (manager un-gate) was never done; the runbook lives only here and needs a
+  numbered operator item; per-dept cards stay RULED OUT. **6d** the agent-day
+  view: **the owner's 14-day assumption is WRONG** (14d is the Call_Legs
+  REBUILD horizon, not the read horizon) -- per-call rows live 400 days,
+  journeys 90; owner chose 90-days-exact-then-degrade with NO capture-column
+  schema change, accepting that the pre-90-day window shows rang-first only
+  and can never be recovered.
+- **BATCH 6 IS CODE-COMPLETE (2026-09-15, block 192) -- 6c AWAITS AN OPERATOR
+  GATE.** 6c + 6d implemented on branch `claude/gallant-meitner-mtuj55`.
+  **6c did NOT un-gate the Outbound report, deliberately**: its last step
+  needs a CLEAN `ok parity` from `runOutboundVettingCheck` against live Neon,
+  which no dev session can produce, and INCONCLUSIVE is not a pass. What DID
+  ship makes that release a flag flip over tested ground: the runbook is now
+  **Operator State #63**; the gate is a named `OUTBOUND_VETTING_GATE_` switch
+  and cross-file-pins FAILS if only one of its two halves (the switch, the
+  menu item's `data-admin-only` + `display:none`) moves; the per-dept manager
+  path -- unreachable dead code since it was written -- is now behaviourally
+  pinned with the switch flipped; the modal joined `drive-admin.js` (its
+  "no harness fixture yet" exemption had gone stale); and **S46** walks both
+  sides of the gate.
+  **6d SHIPPED** as `AgentDay.gs` + the `#/report/agent-day` modal. Three
+  tiers (full / journey-pruned / dqe-only) with the boundary DISCLOSED --
+  `adTierNote_` returns '' on a full day so the banner still means something.
+  Two departures from the roadmap, both deliberate: the day header reads the
+  DQE agent-day row through the DAL (same "aggregate that does not degrade"
+  intent, and it reconciles with My Department by construction), and the tier
+  is decided by WHAT CAME BACK rather than the calendar (the prune is
+  flag-gated and tunable). Auth is roster-derived through the shared
+  `assertDeptAccess_`; unrostered names are admin-only. **S47** walks it.
+  Two mutations SURVIVED the first pass and both were real gaps, fixed not
+  explained: the degraded tier's `first_agent` arm was inline in a
+  Neon-requiring function (extracted to the pure `agentDayKeepRow_`), and the
+  egress pin matched its own call inside `if (false)`.
+- **THE SIX-POINT OUTBOUND ROUND IS BUILT (2026-09-15, block 193) -- five of
+  six; point 1 is the operator gate.** `outboundReport:v2` -> `v3`.
+  (2) connected-callback rate is a tile over the SAME trackable denominator
+  as the raw rate; (3) time-to-callback is a DISTRIBUTION over the shared
+  `OUTBOUND_CALLBACK_BUCKETS_` ladder that generates BOTH the SQL FILTERs and
+  the fallback's JS bucketer; (4) unconnected outbound splits on
+  `OUTBOUND_BRIEF_RING_SEC_`=8 via `outboundClassifyRing_` -- **strict
+  boundary, `= 8` is a REAL attempt, and a NULL ring stays UNKNOWN**;
+  (5) `sendOutboundReportEmail` (same resolver, recomputed server-side,
+  sendAppEmail_ + banded shell); (6) `callbackByHour`.
+  **Correction worth carrying forward:** I told the owner point 6 would reuse
+  `renderAbandonHeatmap_`. It cannot -- that renderer is hard-wired to
+  abandon rate with HIGH = bad, and callback rate inverts the polarity, so
+  reuse would tint a great hour red. A dedicated hour strip ships instead.
+  Every addition landed in the SQL AND the sheet fallback (one shaper, and
+  outbound-fallback.test.js compares them byte for byte).
+  Three mutations survived the first pass: two real gaps (the SQL pin checked
+  only bucket UPPER bounds; the ring boundary had no fixture sitting on it)
+  now fixed and pinned, and one genuinely EQUIVALENT (the `d > prev` guard is
+  redundant under an ascending ladder -- the new test pins the sort order
+  instead of pretending otherwise).
+- **WHERE I LEFT OFF (2026-09-15).** Batch 6 + the six-point round are code-
+  complete. TWO things are owed and neither is mine to decide:
+  (a) **the 6c operator gate** -- backfill, `runOutboundVettingCheck`, release
+  only on CLEAN `ok parity` (Operator State #63). Until it runs, this whole
+  round is admin-only.
+  (b) **the per-dept CALLBACK table is now PLANNED, not built** (owner
+  approved planning 2026-09-15) -- `docs/outbound-callback-dept-plan.md`.
+  **It is sequenced BEHIND an outbound ANSWER-QUALITY fix, and that ordering
+  is the point of the plan:** `connected` counts a voicemail pickup as a
+  reached caller -- structurally, not as a bug, because the far end genuinely
+  answers so every condition the flag tests is satisfied -- and the six-point
+  round promoted that into the "Actually reached" tile, which is live for
+  admins now. A single scope rate carries the over-count as a constant; a
+  dept COMPARISON turns it into a ranking wrong by different amounts per
+  dept. The strong unused discriminator is `ring_seconds` ON CONNECTED calls
+  (voicemail rang to the carrier timeout first, so it should spike; humans
+  are variable) -- but the plan's step 1 is a read-only probe to MEASURE
+  that before any threshold is set, not to assume it. Classification is
+  read-time, so thresholds stay tunable and old rows reclassify free.
+  A useful simplification found while planning: the callback denominator is
+  `disposition='abandoned'`, which can never satisfy the on-hold arm of
+  `inboundDeptPredicate_`, so dept attribution for THIS population reduces to
+  entry_queue alone -- making the table one GROUP BY over queues, folded to
+  depts client-side (which also handles a double-mapped queue, where SQL
+  GROUP BY cannot). Verify that claim with a test before relying on it.
+  **All three open questions were RULED on 2026-09-15, and a follow-up
+  clarification SETTLED the design** -- the plan is rewritten around it and
+  there is no open decision left before build. Rulings: rank by called-back;
+  sub-queues follow `queuesForDept_`; separate by the dept's agents.
+  **THE OPERATING MODEL is the load-bearing fact** (ask about it before
+  re-deriving anything here): *depts are RESPONSIBLE for their own callbacks;
+  an agent from another dept who takes the customer's call EMAILS the owning
+  dept to make the callback.* Consequences: (a) the own-dept rate is a strict
+  SUBSET of its own denominator, so an earlier draft's ">100%, not a rate"
+  objection is WITHDRAWN -- it applied to a design nobody wanted; (b) the
+  handoff is an EMAIL and therefore invisible to the CDR, which is fine,
+  because the owning dept still makes the call and still matches by hash;
+  (c) cross-dept callbacks should be RARE, making the off-diagonal a SIGNAL
+  (skipped handoff, or a queue mapped to the wrong dept) rather than a
+  reporting dimension. So the row shape is own / another dept / not called
+  back -- summing to trackable abandons, which is the invariant to pin first
+  -- ranked on own; the full N x N matrix is a row EXPAND. Crossover agents
+  need no Multi-home column in that shape: per row the only question is
+  "is the dialing agent a member of THIS dept?". Ranked on the own-dept column
+  (confirmed), and **time-to-callback runs from the ABANDON by RULING**, not
+  as a limitation -- an earlier draft framed the handoff delay as a skew to
+  apologise for and that framing was WRONG: the clock is the customer's, and
+  internal handoff time is part of the company's response rather than an
+  exemption from it. **Do not try to net the handoff out** (it is invisible
+  anyway, but the ruling is that it should not be subtracted even if it were
+  not). A slow median with a healthy own-dept rate is a handoff-latency
+  story, and both numbers sit in the same row so a reader can tell.
+- **SUPERSEDED (2026-09-14).** 6a + 6b implemented, pinned (23 new
+  tests across `qcd-alldept-order.test.js` + `overview-chart-answered.test.js`,
+  13 mutations all caught), documented and merged; full suite green under
+  `TZ=America/Chicago` (1389/1389 + INV-16). Next: the owner is still OWED a
+  written answer to "how can the Outbound report be improved?" (design
+  discussion, deliberately out of the 6a/6b implementation scope), then 6c/6d.
+- **DEPLOY STATUS (2026-09-14): all three projects are deployed through
+  005a7b1.** Batches 1-4 and the Neon-storage Health row are LIVE; the
+  "deploys pending" notes in the older entries below are SUPERSEDED. Still
+  outstanding: R47 needs a cdr-report + dashboard push, and the Batch 4
+  nightly sort check needs its one-time INSTALL from CDR Tools (Operator
+  State #61) -- the deploy shipped the code, not the flag or trigger, and
+  Batch 5's two-week gate starts at that install.
+- **R47 workbook cell space SHIPPED (2026-09-14, block 190, branch
+  `claude/gallant-meitner-mtuj55`) -- incident-driven.** The CDR Report
+  workbook hit 9,983,599/10,000,000 and the daily `processIntegratedHistory:Direct`
+  write FAILED; 36.7% of the cap was `QCDR Output`'s empty 12,607x291 grid.
+  Shipped: `cdr-report/sheetSpace.js` (pure planner that REFUSES on a named
+  range, hand-set per-tab bounds that clear each WRITER's reach, audit +
+  preview/apply trim), a CDR Tools submenu, and the dashboard Health page's
+  `workbook-cells` row (sheet-only, warns at 80%). Operator State #62.
+  1365/1365 both TZs; 6/6 mutations. **OPERATOR, in order:** copy the
+  workbook, `previewTrimVettedGrids`, `applyTrimVettedGrids` (frees
+  4,304,481 -> ~56% of cap), re-audit, Manual Export a recent date to
+  exercise the three QCDR writers, then Manual Export Sep 11 to recover the
+  lost Direct rows + their Neon mirror. **Deploys pending:** cdr-report +
+  dashboard. NOT YET DONE: `Raw Data` cols 47->44 (verified safe, ~61k,
+  deliberately deferred); the ~14 small config tabs still at 26 columns;
+  `Dashboard -- DQE Summary Data` is empty with NO code reference anywhere
+  and looks deletable after a formula check.
+- **Parallel track's code half SHIPPED (2026-09-11, block 189, branch
+  `claude/gallant-meitner-mtuj55`):** the Health page's `neon-storage` row
+  "Neon storage by table" -- `neonStorageByTable_` (one json round trip:
+  `pg_database_size` + per-table `pg_total_relation_size`, top 5) + the pure
+  `neonStorageVerdict_` (NeonRetention.gs); informational until
+  `NEON_STORAGE_CAP_MB` is set (warn at 80%); muted when Neon is unreachable;
+  rides the shared connection (R21). Operator State #57 (d). 1357/1357 under
+  `TZ=America/Chicago`; 6/6 mutations; ci:ui not needed (no client / payload
+  change; gen-phase3 omits NeonRetention.gs so the harness row is absent).
+  **Deploy pending:** dashboard. The storage DECISION (paid tier vs shorter
+  `NEON_RETENTION_*` horizons) is still the operator's -- the row gives it
+  its inputs. NEXT: PR when the owner asks; Batch 5's design spike after the
+  Phase 2 install + 2-week gate; the unbatched follow-ons (IR `activeDays`
+  next IR change; the three REPORT modals' rendered coverage needs
+  gen-phase3 fixtures).
+- **Batches 1–4 MERGED to main in PR #308 (2026-09-11), after a /sync-docs
+  pass (block 188 is Batch 4's).** Batch 4 (Phase 2): the nightly check-and-sort over the five historical
+  sheets -- `runHistoricalSortCheck_` (cdr-report/sheetRepairs.js, flag
+  `HISTORICAL_SORT_ENABLED`, CDR Tools install/uninstall/preview/run-now);
+  "single-typed AND ordered AND no TZ split", sorts only a single-typed
+  out-of-order column + re-checks, REFUSES mixed / TZ-split / unparsed with a
+  failure row, defers on any `*_RESUME` pointer; `historicalSort:<sheet>`
+  Pipeline Health rows -> the Health page's `historical-sort` row; the bulk
+  path's sort failure is a failure row under the same name. Follow-ons rode
+  along: the census's per-instant TZ memo, `parseDateForNeon` refusing a bare
+  number, drive-smoke clicking the QCD period toggle. The harness MODELS
+  `Range.sort` since this batch. 1351/1351; 18/18 mutations; ci:ui green (102/16/30/14/52/14/20, both roles).
+  **Deploys pending:** cdr-report (+ INSTALL the check from CDR Tools --
+  Operator State #61), cdr-import, dashboard. Batch 5's 2-week gate clock
+  starts at that install. NEXT: PR when the owner asks; the parallel Neon
+  storage decision; Batch 5's design spike after the gate.
+- **Batch 3 SHIPPED (2026-09-11, block 187; merged to main in PR #308):** after-hours capture -- DQE cols AJ `After-Hrs Answered` (36) +
+  AK `After-Hrs TTT (sec)` (37, integer seconds) over `[15:00, 15:30)` PST,
+  `DQE_AFTER_HOURS_END` under the INV-06 pin with `DASHBOARD_AFTER_HOURS_WINDOW`;
+  writer widens to 37 + labels once; Neon nullable ints (ADD COLUMN IF NOT
+  EXISTS, COALESCE, NULLIF binds; NULL = never captured, 0 = captured/empty);
+  every full-width DQE reader ceiling pinned to Config.gs; duplicate-merge
+  clears AI..AK. 1327/1327; 17/17 mutations; INV-16 clean. One real bug found
+  on the way: the refactor unbound `agentTalkPerParent` inside the split's
+  try/catch -> blank AI (queue-split caught it). **Deploys pending:** cdr-report
+  + cdr-import (same day) + the ONE-TIME backfill by force re-import of the
+  surviving `Call_Legs_*` dates -- Operator State #60. NEXT: PR when the owner
+  asks; then Batch 4 (Phase 2 nightly check-and-sort).
+- **Batches 1 + 2 SHIPPED (2026-09-11, block 186; merged to main in PR #308):** 1a harness under the live TZ split by default (+2
+  tripwires in cross-file-pins); 1b snapshot-before-bulk-repair
+  (`hrBackupBeforeApply_`, `HR_BACKUP_SS_ID`, Operator State #59, new suite);
+  2a Escalations ADMIN delete (`deleteEscalation`, INV-55, S45); 2b the team
+  chip over the dept window + seq guard, the tour gated on
+  `onOverviewSettled_`. 1316/1316; ci:ui green twice (after 2a, after 2b).
+  **Deploys pending:** dashboard (2a+2b) and cdr-report (1b). Batch 3 followed (above).
+- **Phase 1 COMPLETE (2026-09-11; blocks 184 + the R46 fix, PRs #305/#306).**
+  The first live run exposed a TIMEZONE SHIFT: the repair (and the writer
+  change) built each Date as `new Date(Y,M-1,D)` = SCRIPT-TZ midnight, and
+  setValues converts a Date in the SPREADSHEET TZ (Mexico City, one hour
+  behind in summer), so 9,516 cells landed at 23:00 of the previous day —
+  and the census read CLEAN because "9/8/2026 23:00:00" parses as a valid
+  9/8. Fixed the same day (R46): `dateAtSheetMidnight_` (both INV-16 copies)
+  is the ONE construction for a date-only cell; the repair RE-ANCHORS
+  script-midnight cells; the census flags TZ-SPLIT; the fake sheet renders
+  Dates in the spreadsheet TZ; both suites fixture on Mexico City. Corrected
+  run matched the prediction exactly; re-census: DQE CLEAN, no TZ-SPLIT,
+  latest = latest build; none of the other four sheets TZ-splits. **Last
+  acceptance: the 2026-09-12 census after the 9/10 build.** The harness could
+  not see the bug because CI pins the process TZ to the script's and the fake
+  defaulted to the same zone — roadmap Batch 1a makes the split the default.
+- **Phase 0 / 0b RAN LIVE (2026-09-10)** (blocks 182, 183; readings in
+  `docs/date-column-normalization-plan.md`). The two findings that reshaped
+  the plan are recorded there and below; the QCD-clean puzzle was a hand sort
+  on 9/10; the bulk path's swallowed sort failures are folded into Phase 2.
+- **Dashboard batch MERGED (PR #304, 2026-09-11; block 185):** #8 Range on
+  the QCD card (Yesterday default), #6 bar sorts by `totalAnswered`, #7
+  "Ans / day" (`summary:v22`), stale pill amber via `--stale`. **Deploy of the
+  dashboard is the operator's step** (`clasp push -f` + new version), then
+  S41 / Range / bar sort / Show all columns. Remaining from the notes: #2+#1
+  (roadmap Batch 2b), #5 (Batch 3; 14-day clock).
+- **NEW owner ask (2026-09-11): Escalations admin DELETE** — roadmap Batch 2a
+  (admin-gated hard delete of row + activity in one txn, usage-row audit with
+  no PHI, snapshot refresh, `dsConfirm_` danger tone, `data-admin-only`).
+- **Owner decisions on the 2026-09-10 testing notes (#8/#6/#7/stale DONE above):**
+  #8 Range button on the QCD card, Yesterday stays default. #2+#1: relabel the
+  chip "How is my team doing?", DROP its last-30-days override (it defeats the
+  cache and contradicts M4's single-date-authority), seq-guard rapid clicks;
+  gate the tour on `ovLoad_` completing instead of the fixed 1200 ms timer —
+  no artificial delay, no sample pages. #5: TWO ADDITIVE DQE columns, AJ
+  AFTER_HOURS_ANSWERED + AK AFTER_HOURS_TTT over `startPST ∈ [15:00, 15:30)`
+  (hard 5:30 PM CST cutoff); cols A–AI untouched; new constant joins the
+  INV-06 pin; Neon ADD COLUMN + COALESCE; the 14-day capture clock is running.
+  NEW: stale pill → dedicated `--stale` amber token pair (`--warn` is hue 30,
+  red-orange), not a global `--warn` shift. #6 bar sorts by `totalAnswered`;
+  #7 ans/day per active day as a hideable column. Already shipped, do not
+  rebuild: presets exclude today; managers out of averages/in for volume; IR
+  email-to-agent; Caller Lookup +1. Order: #8→#6→#7→stale (one dashboard
+  deploy) → #2+#1 → #5 alone.
+- **The three-phase plan this belongs to** (agreed with the owner, not yet in
+  `docs/`): Phase 1 normalize DQE col B to real `Date` (the other four sheets
+  already write `dateObj`, so Date is the family-consistent target and the
+  writer needs NO change — hence no INV-16 two-file edit); Phase 2 a nightly
+  check-and-sort trigger over all five sheets; Phase 3 the binary-search span,
+  DEFERRED and gated on a verified-order guarantee.
+- **Two findings that reshaped that plan — do not re-derive them:**
+  (1) Only DQE sorts itself on every write. The daily / Manual Export path
+  (the path Operator State #56 tells operators to use for reprocessing) NEVER
+  sorts Q Path / QCD / CSR Transfer, and sorts CDR only against the last row.
+  So the nightly trigger is the PRIMARY mechanism for those three, not a safety
+  net. (2) The check must be "single-typed AND ordered", never just ordered:
+  Sheets groups numeric/Date before text, so a mixed column that has been
+  sorted reads as non-decreasing while being wrong — an order-only check would
+  certify DQE forever.
+- **The date-column CACHE was investigated and REFUSED** (no code written).
+  Two measured blockers: the column serializes to ~436 KB against CacheService's
+  ~100 KB per-value cap; and the span is POSITIONAL, so a force re-import of an
+  older date shifts rows while neither `reportFreshnessTag_()` nor `lastRow`
+  necessarily moves — a stale span silently under-reports, and the per-row date
+  filter cannot recover rows never read. Do not revive it; the real fix is the
+  three phases above.
+- **C2 is now mechanized as far as it honestly can be** (block
+  `176-c2-mechanized-broad-implement.md`). claude-md-split fails when CLAUDE.md
+  names a test/script/driver/docs file that does not exist. Test + doc only, no
+  deploy. **The bullet-level "every convention names an enforcement" meta-test
+  was deliberately NOT built** — measured against F1/F2/F3 it catches 0 of 3
+  (F2/F3 cite a test for a different claim in the same bullet; F1 is not in a
+  bullet). Do not revive it from the audit text without re-reading that
+  measurement.
+- **NEXT: bound the Neon-outage fallback (planned, not started).** Findings
+  from the planning pass: R26b bounded the sheet read's SPAN but the read is
+  DEPT-INDEPENDENT and still charged PER DEPT, so the all-dept loop
+  (`QCDReport.gs:358 allDepts.forEach`) multiplies one identical read by 14.
+  The repo already has the two mechanisms needed: per-execution memos
+  (`DQE_DATE_BOUNDS_MEMO_`, `DEPT_CONFIG_ROWS_MEMO_`) and whole-run time
+  budgets (`CACHE_WARM_TOTAL_BUDGET_MS`, `NEON_MIRROR_BUDGET_MS`). Plan is
+  memo-first, budget-second; full plan in the session transcript.
+- **Batch 1 + Batch 2 of the 2026-09-09 broad scan are implemented** (F1 modal
+  rendered-coverage tripwire + Coaching added; F2 svc() flagProp tripwire; F3
+  window.confirm ratchet; F5 non-finite coercion counted) -- block
+  `175-batch1-batch2-broad-implement.md`. **TWO DEPLOYS PENDING:** the F5
+  change is shipped code in both `apps-script/cdr-report` and
+  `apps-script/cdr-import` (`clasp push -f` in each); nothing else in the batch
+  needs a deploy. **`npm run ci:ui` was NOT run** (playwright absent here), so
+  the new Coaching driver stage is unverified until CI -- statically checked
+  against the six passing modals, low but non-zero risk.
+- **F4 was RETRACTED, not implemented.** The audit claimed dark mode inherits
+  light-mode black shadows as an oversight; styles.html line 68 documents it as
+  deliberate ("Constant across themes -- rgba(black) reads on both light and
+  dark surfaces"), and my evidence was wrong anyway (I diffed the @media print
+  block, not `body[data-mode="dark"]`). Whether it reads on dark is PERCEPTUAL
+  and belongs to the operator visual check, not a code finding. Do not
+  re-raise it from the audit text.
+- **Correction to the audit's F3 evidence:** it claimed the window.confirm
+  backlog GREW to 14; the precise count (excluding comments) is 11, i.e. it
+  SHRANK below the documented "~12". The finding's mechanism (no tripwire)
+  stood; the number did not. The ratchet now pins it at 11.
+- **Follow-on surfaced by building F1:** the three REPORT modals (inbound /
+  direct / outbound) have no rendered coverage at all. Now explicit in
+  `DRIVER_MODAL_EXEMPT` rather than invisible; needs gen-phase3.js fixtures.
+- **INV-06 work-window parity is CLOSED and needs no deploy** (block
+  `174-inv06-window-parity-broad-implement.md`). The `S1/INV-06` pin in
+  cross-file-pins now covers FOUR copies, not two: it gained the DQE
+  drill-down's own `DQE_DD_WINDOW_START/END` and the CST half of
+  `DASHBOARD_WORK_WINDOW` (derived via `DQE_PST_TO_CST`). Test-and-docs only
+  — no production code, so nothing to push. **Correction recorded there:** the
+  2026-09-08 systems-map run claimed INV-06 was "the one seam with NO
+  enforcement"; that was wrong — the pin has existed since the 2026-08-27
+  scan and tests/README.md listed it. docs/module-dependencies.md carried
+  that false claim for one day and is fixed.
+- **DEFERRED by the operator (2026-09-09), not open:** moving the tooling layer
+  (`tests/`, `tools/ui-harness/`, `scripts/`) inside the Cycle Workflow Config
+  Subsystems. Recommendation was to leave it alone; operator said skip for now.
+  Do not re-raise unprompted. Context if it comes back: `/broad-scan` is
+  repo-wide and already reaches that code, so the only gap is that the
+  subsystem-scoped commands (`/targeted-audit`, `/audit`, `/plan`,
+  `/implement`) cannot target it. The middle option, if ever wanted, is ONE
+  subsystem listing just the ~18 enforcement files rather than all 99 suites.
+- **Batch 2 of the 2026-09-03 broad scan is implemented on
+  `claude/broad-scan-p493eu` (O-2, O-3/I-8/C2-5, O-4, O-5, O-6, O-7, O-12,
+  O-14 + the Batch 1 follow-ons I-6 / backfill tally rows / EMPTY holiday
+  exit) -- block `168-batch2-health-truth-broad-implement.md`. Batch 1 (D-1,
+  I2-9, T-8, T-7) MERGED as PR #277. Three deploys carry Batch 2 (dashboard,
+  cdr-import, cdr-report). Next: Batch 3 (pipeline silent catches I-3/I-2/I-1,
+  the roster ext parsers I2-1, I-4 stray legs, I-10, P-1/P-9, X-1).**
+- **Batch 1 of the 2026-09-03 broad scan is implemented on
+  `claude/broad-scan-p493eu` (D-1/O-1 empty queue report, I2-9 ISO date
+  trap, T-8 fingerprinted resume pointers, T-7 sanitizer-loss tally) --
+  block `167-batch1-wrong-numbers-broad-implement.md`. Three deploys carry it (dashboard,
+  cdr-report, cdr-import). The operator is reprocessing Aug 5/6/7/10/11/12/13
+  via Manual Export in parallel; nothing in Batch 1 changes what a Manual
+  Export writes for DQE.** Next: Batch 2 (Health page truth: O-2 LATE, O-3/C2-5
+  one-sided steps, O-4 age checks, O-7, O-6, O-5, O-12/O-14).
+- **Two deploys are pending, and the dashboard one now carries TWO fixes:**
+  (1) `clasp push -f` from the repo root (Department Dashboard) — the R26b
+  bounded DQE sheet read (the 108-second My Department load) AND the R30
+  window clamp (Insights reporting a window past the data). Neither is live
+  until this runs. (2) `cd apps-script/cdr-import && clasp push -f` — still
+  the DST prune fix (`DeleteOldSheets.js`); it matters before the November
+  fall-back transition.
+- **Everything through increment 166 is MERGED to `main`** (PR #270 the
+  bounded read + egress metering + queue-overlap diagnostic; #272 the
+  month-boundary ui-harness fix; #273 the R30 clamp; #274 the R31 tone probe
+  + the IR note/default fix). **Do not open a PR for any of it.** The branch has been restarted from `main`; per the repo rule,
+  follow-up work continues from there rather than stacking on merged history.
+- **NEON IS BACK (2026-09-02) and the coverage check found 56 gaps over
+  2026-08-03..2026-09-01. TWO DISTINCT SIGNATURES, do not treat as one:**
+  (a) MISSING IN NEON on Aug 20/21/24/25/26/27/28/31 -- eight weekdays,
+  IDENTICAL across dqe/qcd/cdr/direct: that is the mirror-write outage, cleanly
+  bounded. (b) COUNT MISMATCH on `dqe_history` ONLY for Aug 5/6/7/10/11/12,
+  sheet exceeding Neon by 3-6 rows: a DIFFERENT, earlier failure, cause not yet
+  established. Under `DQE_READ_SOURCE=neon` those dates would under-report a
+  few agents.
+  **The email TRUNCATES**: 36 of 56 findings printed, so ~16 zero-row weekdays
+  on `inbound_calls`/`outbound_calls` were never shown. Re-run
+  `runNeonCoverageCheck()` in the editor and read `out.noSheet[]` -- those are
+  the ONLY clock-bound ones (no sheet primary; `Call_Legs_*` prunes at ~14
+  days, so the recoverable edge is ~Aug 19 and moves daily).
+  **Prefer the sheet-reading backfills over a force re-import**: the sheets
+  already hold the rows, while a force re-import deletes the date across all
+  five historical sheets and rebuilds from `Call_Legs_*` that may be pruned
+  (the P-3 guard aborts cleanly, so it is safe but useless there).
+  Order: `backfillDQEHistoryUpsert()` (fixes BOTH signatures via ON CONFLICT DO
+  UPDATE) -> `backfillQCDHistory()` -> `backfillCDRHistory` ->
+  `backfillDirectCallToNeon()` -> re-run the check -> parity gates spanning
+  **Aug 5 .. Sep 1** (wide enough for both signatures) -> flip read sources
+  only on CLEAN.
+- **VERIFY R30 IN THE LIVE APP after the dashboard deploy** — the unit suite
+  pins the arithmetic and the wiring, but not that the correction reads well.
+  The owner's repro is the check: enter 08/31–09/02 with data through 08/31
+  and confirm the dept controls AND the Insights section both land on 08/31,
+  with ONE correction note rather than two.
+- **After the next slow My Department load, read the execution log for
+  `[dqe-read] dqeDateBounds`.** Whichever of `openMs` / `scanMs` dominates
+  decides the next perf increment: bound the column scan, or memoize
+  `openSpreadsheet_()` (83 callsites, 26 files — the bigger change, held
+  pending this reading).
+- **Owner action, no deploy needed:** enable report cache warming — Alerts
+  modal → *Report cache warming* → Install, or run `installCacheWarmTrigger()`
+  in the dashboard editor. Operator State #21.
+- **Neon is data-transfer-quota-blocked**, not archived. Waiting on the
+  billing reset or a plan upgrade. `DQE_READ_SOURCE` / `QCD_READ_SOURCE` are
+  on `sheet`, which is a supported mode — the R26b fix is what makes that mode
+  usable at the current sheet size.
+- **Verification still outstanding from the queue-split flip:** with
+  `QUEUE_SPLIT_SCOPE=dept`, the dashboard should read **Spanish 17 rung / 15
+  answered** for 2026-08-31 (CSR 422/390, PAP 12/2). The audit says so; nobody
+  has confirmed the rendered page agrees.
+
+### Latest session (Batches 1+2 of the roadmap — safety nets + dashboard round, 2026-09-11)
+- Implemented 1a / 1b / 2a / 2b; summary block verbatim in
+  `.cycle/blocks/186-batch1-2-safety-nets-dashboard-round-broad-implement.md`.
+  `node --test` 1316/0; INV-16 in sync; `npm run ci:ui` all eight stages
+  green after 2a and again after 2b; 16/16 mutations fired across the four.
+- Decisions: (1) the fake spreadsheet's DEFAULT zone is the live one and a
+  pin keeps it apart from the script zone -- the 89 explicit Chicago fixture
+  args were simply removed (nothing relied on them); (2) the repair backup
+  lives in a SEPARATE workbook (cell cap) with the id self-stored, and a
+  failed copy BLOCKS the apply; (3) the escalation delete is a HARD delete of
+  row + trail, admin-only, audited as a usage row carrying the department
+  only (no id, no PHI); (4) the chip copies the dept window rather than
+  merely dropping its override, so it shares the region's cache key; (5) the
+  tour waits for the Overview to settle (cache paint / success / failure)
+  plus 250 ms.
+- Same-day context: Phase 1 of the date-column plan completed after the R46
+  timezone fix (PRs #305/#306), the roadmap landed (#307), and PR #304 (the
+  dashboard batch) merged -- all on main. Tomorrow's census after the 9/10
+  build is Phase 1's last acceptance step.
+- Where I left off: PR #308 (Batches 1-4 + the /sync-docs pass) and PR #309
+  (this checkpoint) MERGED to main; the branch is fast-forwarded onto main
+  with nothing unmerged. Owner's steps: deploy all three
+  projects, INSTALL the nightly sort check from CDR Tools (#61), run the #60
+  after-hours backfill while the Call_Legs tabs survive, walk S45 / S23 / the
+  chip. Next code work: the Neon storage decision (parallel track) and Batch
+  5's design spike once Phase 2 has been quiet for two weeks.
+
+### Latest session (Batch 2 — Health page truth + Batch 1 follow-ons, 2026-09-03)
+- Implemented the seven Batch 2 findings plus I-6 and two follow-ons;
+  summary block verbatim in `.cycle/blocks/168-batch2-health-truth-broad-implement.md`.
+  `npm run ci` 1172/0; INV-16 in sync.
+- Decisions: (1) failure-only Pipeline Health steps AGE OUT in the Health
+  classifier (4 days, `HEALTH_FAILURE_ONLY_STEPS_`) rather than logging
+  success rows -- no sheet growth, no INV-16 edits; (2) `*_LAST` age checks
+  are gated on the trigger being installed AND the flag on, with 4-day /
+  9-day allowances and none for window-gated or editor-run engines; (3) the
+  backfill sanitizer tally reaches the Health page as `dqeUpsert` /
+  `dqeBackfill` Pipeline Health rows (`failure` on loss -- the cue to run
+  the sheetRepairs); (4) I-6 moved the three compute stages ahead of the
+  force-delete (they read none of the deleted sheets).
+- Open from this session: the DOCUMENTATION UPDATES list in the block
+  (CLAUDE.md System Health corollary is now FALSE and must be rewritten;
+  fix-history rows; operator-state #21/#23/#35/#44/#52).
+- Where I left off: Batch 2 committed + pushed; PR opened for the owner.
+
+### Latest session (Batch 1 — wrong numbers leaving the system, 2026-09-03)
+- Implemented the four Batch 1 findings; summary block verbatim in
+  `.cycle/blocks/%s`. `npm run ci` 1154/0; INV-16 in sync.
+- Decisions: (1) the qcdAll anchor is the latest QCD date, NOT
+  `reportFreshnessTag_` (the DQE date is the wrong source for a QCD-only
+  report), with a trigger-safe sheet-scan fallback because the RPC carries a
+  signed-in gate; (2) an EMPTY report is REFUSED (trigger: flagged result, no
+  marker; preview/blast: throw) -- a zero-activity business day therefore
+  holds at `EMPTY` instead of sending "no activity", accepted; (3) the
+  preview reads fresh but still warms the key; (4) legacy bare-integer
+  resume pointers restart from 0 rather than being trusted; (5)
+  `displayToDate` accepts ISO but the build canonicalizes col B to M/D/YYYY
+  so ISO text is never written.
+- Open from this session: the DOCUMENTATION UPDATES list in the block
+  (CLAUDE.md two bullets, fix-history rows, operator-state #31); the
+  cdr-report `DQE_UPSERT_LAST` tally is not visible on the Health page.
+- Where I left off: Batch 1 committed + pushed; PR opened for the owner to
+  merge and deploy after the Aug reprocess. Batch 2 not started.
+
+### Latest session (R31 — teaching the gate to see a wrong TONE, and three wrong claims)
+Increment 166. **1134/1134 tests**, gate **92/92** (from 84), all stages, 7m6s.
+Merged in PR #274. No block file: recorded here.
+- **The fix:** `visibleErrorTones(page)` in drive-smoke asserts that nothing
+  carrying `.status-error` is actually rendered on a healthy page, per page and
+  per role. Plus the first automated coverage of the IR GENERATE path (menu ->
+  modal -> pick agent -> Generate), which no driver had.
+- **The lesson, which is the real content of this increment.** I made three
+  escalating claims and every one was wrong: (1) "a red banner on every IR
+  open" -- no, the clamp is in `runIrReport()`, which fires on GENERATE; a
+  direct open shows the setup form. (2) "on every generate the user sees red"
+  -- no: probing the live page showed the note IS set with `status-error`, but
+  it lives inside `#individual-form`, which the results replace, so it measures
+  **0x0 and never reaches the screen**. (3) "my guard is theatre" -- no: both
+  mutations passed because passing was CORRECT. There was no visible error tone
+  to find.
+  **The probe that settled it was one command and I ran it only after the third
+  claim.** Read a passing mutation as a possible wrong PREMISE, not just a
+  broken test.
+- The R30 IR changes still stand on merit: IR defaulted its To to
+  `isoOf(today)`, a genuinely over-long window (the R18 divisor bug), and a
+  stale correction left in the hidden form shows on a later return to it.
+- **Also fixed a driver I had just broken:** the first IR block guarded on
+  `locator.count()` (existence) then clicked a MENU-GATED button, so Playwright
+  retried a hidden element for 30s and killed the run. drive-admin has opened
+  `#admin-menu-btn` before its menu-gated modals all along -- read the existing
+  driver before writing a new one. IR is also admin-only from the header
+  (`data-admin-only` on the enclosing `.header-menu`), so the block skips
+  managers rather than asserting against a correctly-absent surface.
+- **Three assertions this session passed with their subject broken** (a source
+  pin matching my own comment; a fixed-width slice bleeding into the
+  neighbouring listener; this one). The baseline caught none of them; the
+  mutation caught all three.
+- CI slowness resolved as variance, measured not assumed: 7m6s locally, all
+  stages green.
+- Where I left off: merged. The dashboard deploy is still pending.
+
+### Prior session (R30 — the window clamp reached one surface out of eight)
+Increment 165. **1132/1132 tests**, `npm run ci` green, full `ci:ui` gate green
+(all stages, 84/84 smoke). Merged in PR #273. No block file: a
+bug-fix pass, recorded here.
+- Owner report: entering 08/31–09/02 with data through 08/31 corrected the
+  dept controls but left the open Insights region reporting a window past the
+  data. The `(scoped: …)` pill was working — it exists to flag exactly that
+  divergence. The silent half is the damaging one.
+- **`clampToLatestData_` (R18) had exactly TWO callers, both on the dept To
+  field.** Seven other date-entry surfaces accepted an over-long window, and
+  every per-workday figure divides by the INV-35 workday count of the SELECTED
+  window — the 273.8/day vs 365/day split that motivated R18 was still live on
+  all of them.
+- Fixed: the dept **From** field, Insights, the Individual Report, the
+  all-departments Daily Queue Report. **Clamped at each report's RUN
+  chokepoint, not per input** — Insights has two apply paths that each write
+  `ins-from`/`ins-to` and call `runInsReport()`, so hooking either alone would
+  leave the other broken.
+- **Source-aware by parameter.** The Daily Queue Report reads QCD and clamps to
+  `latestQcdIso_`; clamping it to the DQE date would HIDE a queue day that
+  exists. Same reason the per-call surfaces (Inbound / Outbound / Direct /
+  Caller Lookup) are deliberately left unclamped — the client holds no latest
+  date for those tables. A test pins that and says to delete itself if a
+  per-call latest is ever added.
+- New `window-clamp.test.js`, mutation-tested. **Two of five mutations
+  initially survived and both were defects in the TESTS**: one asserted against
+  an explanatory comment that happened to contain the source name, so a call
+  wired to the WRONG source still passed; the other used a fixed-width slice
+  that bled into the neighbouring listener, which legitimately clamps. Worth
+  remembering — both are the "test passes with its subject broken" class.
+- Also this increment (PR #272): **the ui-harness MTD check failed on the 1st
+  of a month.** `gen-payloads` derives `latest` from the wall clock and the
+  MTD window is `latest.slice(0,8)+'01'..latest`, so on the 1st it collapses
+  onto the dept page's single-day window and "the figures must differ" is
+  unsatisfiable. It now compares the rendered spans and asserts difference OR
+  equality accordingly. Would have recurred monthly.
+- **Still structural:** `gen-payloads.js` derives fixture dates from the wall
+  clock, so month-boundary and weekend-dependent failures remain a class. A
+  pinned fixture date would end it, but several checks are relative-to-today
+  by design (YTD calendar caption, freshness pill, preset clamps).
+- Where I left off: merged; the dashboard deploy is pending.
+
+### Prior session (R29 — /sync-docs after the R26b/R26c work)
+Increment 163. **1122/1122 tests**, `npm run ci` green. Doc-only; merged in
+PR #270 with the code it documents.
+- **The overdue one:** the bounded-span sheet read was implemented TWICE
+  (R25b for CSR transfer, R26b for the DQE reader) and written NOWHERE — the
+  second rediscovered the rule from scratch six weeks after the first, with the
+  reasoning stranded in a callsite comment both times. Now a Common Gotchas
+  bullet naming both callsites, the enforcing tests, and the discriminator a
+  naive "never tail-scan" rule would get wrong (`nmReadDateRowsTail_`, F-20,
+  tail-scans legitimately: date-ordered sheet AND it widens until the block is
+  provably complete).
+- Operator State **#47** now says the Health egress gauge is blind to
+  cdr-report's counter by construction (same key, different project store),
+  how to read it, and that the total is the sum — the last overage was ~96%
+  invisible to the figure operators were reading.
+- Operator State **#42** gained the measured magnitude (Spanish's roster
+  worked 116 CSR calls vs 17 Spanish → ~8.6x off-mode inflation, 14 crossover
+  agents, 6 dept pairs), names `queueOverlapAudit()`, and records as SETTLED
+  that the Daily Call Queue Report's per-queue figures are NOT double-counted.
+- fix-history gained the `R25b`/`R26b`/`R26c` family so those codes, now cited
+  in code comments, resolve.
+- Checks 2 and 5 clean: 103/103 subsystem paths exist with nothing unassigned;
+  CLAUDE.md 163.6 KB with 36 KB headroom and no bullet over the 4 KB ratchet
+  (System Health sits at 4090 B — 6 bytes under, which is why the egress note
+  went to operator-state rather than there).
+- No block file: a doc-only pass, recorded here.
+
+### Prior session (R26c — attributing the getLatestDataDate cost)
+Increment 162. **1122/1122 tests**, `npm run ci` green, INV-16 guard clean.
+Block: `.cycle/blocks/101-r26c-bounds-timing-followons-broad-implement.md`.
+- Took the two follow-ons from block 100 (the cross-caller memo was excluded
+  by the owner). One shipped as instrumentation, one was assessed and
+  deliberately NOT fixed.
+- **`sheetScanDqeDateBounds_` now splits its own timing** — workbook open vs
+  date-column read — into one `[dqe-read] dqeDateBounds ... openMs=N scanMs=N`
+  line, emitted after the memo check so extra callers don't re-log.
+- **Why not a fix:** the 36.5s has two candidate causes with OPPOSITE fixes —
+  the 31.5k-row column read (bound it) or `openSpreadsheet_()`, which is a bare
+  unmemoized `SpreadsheetApp.openById` with **83 callsites across 26 files**
+  (memoize it). Guessing wrong buys a wide change for nothing, and the memo's
+  test blast radius is real (20+ suites hand-reset memos; no central harness
+  hook; a forgotten reset is a silently stale fixture). Shipped the measurement
+  instead. **One slow morning's log now names the half to fix.**
+- **Request coalescing: assessed, rejected.** A `LockService` stampede gate
+  makes the waiter block behind a slow execution and risk the 6-minute ceiling
+  — whose kill SKIPS catch blocks, the class that once ate a Daily Queue Report
+  day. Worse failure mode than the gap. Mitigations stay the 6h TTL + cache
+  warming + R26b.
+- Mutation-tested, all three caught (combined ms, log above the memo, no
+  try/catch).
+- Outcome: MERGED to `main` in PR #270.
+
+### Prior session (R26b — bounded DQE sheet read)
+Increment 161. **1119/1119 tests**, `npm run ci` green, INV-16 guard clean.
+Block: `.cycle/blocks/100-r26b-bounded-dqe-scan-broad-implement.md`.
+- `sheetFetchDqeRows_` read the WHOLE `DQE Historical Data` sheet at full
+  width, twice (getValues + getDisplayValues, INV-02), to answer a one-day
+  question — ~2.2M cells on the live 31.5k-row sheet, ~48s per call, and the
+  primitive is dept-independent so every department repeated the identical
+  read. Now: scan the date column, find the first/last in-range row, read only
+  that span. One day goes to ~37k cells.
+- **Min/max SPAN, not a tail scan** — the same R25b reasoning: a backfill
+  appends older dates after newer ones, so the sheet is not date-ordered and
+  the span can hold out-of-range rows in the middle. The per-row date filter
+  STAYS; the span bounds the read, it does not replace the filter. An empty
+  window skips the wide read entirely.
+- Mutation-tested, all four caught (full read restored, span collapsed to a
+  tail scan, filter removed, early-out removed). Five new tests in
+  `dal-cutover.test.js`, including full-scan equivalence on a scrambled sheet.
+- Also fixed a **pre-existing test-isolation bug** there: two tests did
+  `delete h.ctx.sheetFetchDqeRows_`, which strips the property from the vm
+  global for the rest of the run. Save/restore now.
+- Nine callers, none touched, none able to observe the change — the returned
+  row set is identical for any sheet order.
+- Earlier in this session, same branch: cdr-report Neon egress metering
+  (`neonEgress.js`, 5 callsites + a coverage tripwire), the
+  `queueOverlapAudit()` diagnostic (which proved the Spanish/CSR
+  double-counting empirically — ~8.6x inflation, 14 crossover agents — and
+  proved the 436 Daily Queue Report figure is NOT a double-count), and two
+  doc corrections (Neon free-tier compute 100h not ~190h; pruned Call_Legs are
+  re-importable from the Drive CSV archive, not gone).
+- Outcome: MERGED to `main` in PR #270.
+
+### Prior session (R28 — /sync-docs after the R26/R27 work)
+Increment 160. **1082/1082 tests**, `npm run ci` green. No block file: a
+doc-only pass, recorded here.
+- Both gaps found were the same rule — a convention written without naming
+  what enforces it (C2), which is how the first three duplications drifted.
+  `DQEdrilldown.js` now has its own bullet naming
+  `dqe-drilldown-parity.test.js`; the cross-PROJECT `hashPhone` /
+  `cdrHashPhone_` pair is named with `insurance-numbers.test.js` (the INV-16
+  guard pairs same-NAMED files, so it never covered them).
+- Operator State #43 gained one clause: it says this trigger's cadence IS the
+  answer to "how far back can X be rebuilt", and until the R27 fix that answer
+  was seasonally a day short.
+- Checks 2/3/5 came back clean: 101/101 subsystem paths exist with nothing
+  unassigned, the property registry passes both directions, and at 38.4 KB of
+  headroom with no bullet over the ratchet there was nothing worth pruning.
+  No deletions proposed, so nothing needed re-resolving.
+
+### Prior session (R27 — the block-158 follow-ons)
+Branch `claude/broad-scan-76h2dr`, **1082/1082 tests** + `drive-admin.js` 41/41, `npm run ci` green. Increment 159. Block: `.cycle/blocks/159-r27-followons-dst-fix-admin-driver-broad-implement.md`.
+- **DST prune fix (the real bug from 158)**: age is now whole calendar days via `Date.UTC` on both sides, not a local-midnight ms difference. Strictly LESS-deleting or equal in every case — the only safe direction for an irreversible delete. The characterization test became a regression test, plus its complement so the fix can't degenerate into "stop deleting near a transition".
+- **Malformed tab names are now REJECTED, not normalised**: `Date.UTC(2020,12,99)` is a real timestamp, so a nonsense suffix used to be aged as whatever it rolled over to. Range check + round-trip (catches Feb 30 / Apr 31); a leap-day test guards against over-strictness. Trade-off documented: a bad name accumulates rather than ageing out.
+- **`neon-keepwarm.test.js`** (15): the cost gate, asserted on one observable — did this invocation open a connection? Half-open window, weekend skip, and a typo'd hour property that must NARROW to the default rather than widen to 24/7. TZ-independent by construction.
+- **`insurance-numbers.test.js`** (14): the normalizer input-by-input, the PHI contract (only hash+label reach Neon), and CROSS-PROJECT hash equivalence between `hashPhone` and `cdrHashPhone_` — a divergence there silently unlabels every insurer.
+- **`drive-admin.js`** (41 checks, now a blocking ci:ui stage): the six admin modals + the Escalations worklist finally have an ASSERTING driver.
+- Two things the mutation runs caught, worth remembering: the driver's first draft PASSED focus/Escape checks against a selector matching nothing (null is never `=== false`), and that vacuous pass was hiding a real find — **`#system-health-modal` does not exist**; the router names it `#health-modal`, and exploratory `drive-phase3.js` has been probing the wrong id all along without anyone noticing, because it records failures instead of raising them.
+- Outcome: MERGED to `main` in PR #266 together with F8c, R26 and the R28 doc pass. Its `drive-admin.js` stage ran in CI at 41/41, so the gate is proven on the runner and not only locally.
+
+### Prior session (R26 — tests for the two untested destructive/mirrored paths)
+Branch `claude/broad-scan-76h2dr` (1 unmerged commit: the F8c relocation), **1051/1051 tests**, `npm run ci` green. Increment 158. Block: `.cycle/blocks/158-r26-untested-destructive-paths-broad-implement.md`.
+- Came out of a coverage survey: the dashboard is 37/38 files loaded, but the pipeline projects had real holes. Two were worth closing.
+- **`retention-prune.test.js`** (14 tests): the Call_Legs_* prune is the only irreversible-deletion path in the repo and had zero tests. Pins the blast radius (non-Call_Legs tabs untouchable), the exclusive 14-day cutoff, P18 failing LOUDLY instead of a green "deleted 0", and the Pipeline Health row.
+- **`dqe-drilldown-parity.test.js`** (13 tests): `DQEdrilldown.js` is a FOURTH hand-mirrored copy of the pipeline rules (its own `findAgentTalkOnParent`, `canonicalize_`, TTT/ATT summary) and had NO guard — not in `check-duplicated-files.sh`, not in `cross-file-pins`. One fixture now drives the real build AND the real drill; reverting each of the three historical drifts (F24, R8-D4, F-13) fails it.
+- Both suites were **mutation-tested, not assumed**. One mutation (forward loop) was deliberately NOT caught — `getSheets()` returns a snapshot, so the index-shift hazard the comment claimed does not exist; the comment was corrected rather than the test strengthened.
+- **REAL BUG found, characterized, not fixed** (flag-don't-fix): the prune deletes a day EARLY across the fall-back DST transition — fractional-day arithmetic on local midnights yields 14.0417 and clears `> 14`. Narrows retention to 13 days for ~2 weeks each November, against a window the queue-split backfill already races. One-line fix proposed in the block; a characterization test holds the current behavior and says to delete itself when fixed.
+- TESTS ONLY — no production source touched.
+- Outcome: committed, and MERGED in PR #266. The CLAUDE.md follow-up it flagged (name DQEdrilldown as the fourth duplication) was done in increment 160 — closed, not outstanding.
+
+### Prior session (R25b — bounded CSR read + weekly coverage trigger)
+Branch `claude/broad-scan-76h2dr` (6 unmerged commits), **1023/1023 tests**, all guards green. Increment 157. Block: `.cycle/blocks/157-r25b-bounded-read-weekly-trigger-broad-implement.md`.
+- **Bounded CSR read**: the A..R widening still scanned the whole sheet on every CSR dept load. Now a narrow date-column pass locates the window's row span and only that span is read wide. Deliberately NOT a tail scan — the sheet is append-only and never sorted, so a tail scan would drop backfilled dates (pinned by an out-of-order test).
+- **Weekly coverage trigger**: `runSheetCoverageWeekly_` flag-gated on `SHEET_COVERAGE_ENABLED`, registered in the Health readiness matrix WITH its flag; silent on a clean week. Operator must run `installSheetCoverageTrigger()` once.
+- **CLAUDE.md relocation pass is now due** — 191KB/200KB, and both increments here needed the System Health bullet trimmed to fit.
+- Where I left off: committed + pushed; branch needs a PR (6 commits).
+
+### Earlier session (R25 — CSR transfer detail + sheet coverage check)
+Branch `claude/broad-scan-76h2dr` (5 unmerged commits; PR #264 was the last merge), **1016/1016 tests**, all guards green. Increment 156. Block: `.cycle/blocks/156-r25-csr-transfer-sheet-coverage-broad-implement.md`.
+- **#3 CSR transfer detail**: `CSR Transfer Historical Data` always carried per-AGENT rows + 11 per-QUEUE destination columns; the dashboard read 7 columns and showed one percentage. Now surfaces destinations, who transfers, a daily series, and DISCLOSES transfers outside the 11 fixed columns. `summary:v20 -> v21` synced across 8 docs.
+- **#2 sheet coverage**: NEW `SheetCoverage.gs` flags business days with ZERO rows in DQE / QCD / Direct sheets — the interior gap no other signal can see. No Neon connection, so it works mid-outage. Health row + Operator State #52.
+- Earlier in this branch: Neon-outage fallbacks (Outbound Calls export + 3 surfaces), date presets never include today (shared resolver), email-an-IR-to-its-agent, dsPrompt_.
+- **CLAUDE.md is at 191KB / 200KB cap (~9KB headroom)** — the System Health bullet had to be trimmed under the per-bullet ratchet to fit this increment. A relocation pass is now genuinely needed before the next feature.
+- Where I left off: committed + pushed; branch needs a PR (5 commits).
+
+### Prior session (prop-registry — Script Property registry + Health inventory + self-cleaning tool params)
+Branch `claude/broad-scan-76h2dr` (RESTARTED from merged main after PR #261; carries the update-notice commit 92f95d7), **969/969 unit tests** (+9), INV-16 + governance guards green. Increment 155. Block: `.cycle/blocks/155-prop-registry-broad-implement.md`.
+- Owner hit the settings page's 50-property display cap and asked for consolidation. Assessment ruled out JSON-blob merges (concurrent-writer hazard) and the LAST/LAST_RESULT pair-merge (cosmetic ROI, wide blast radius — skipped by owner decision); implemented instead: **`Config.gs::PROP_REGISTRY_`** (every dashboard key classified operator/engine/tool; prefix families; secret set), the **Health "All Script Properties (inventory)" folded section** (classified live store, warn rows for UNRECOGNIZED keys, values never shipped — secret-sentinel pinned), and **self-cleaning tool params** (`clearToolParamsAfterCleanRun_`, CLEAN-verdict-only across the four parity/vetting tools, typeof-guarded).
+- Enforcement: NEW `tests/unit/prop-registry.test.js` — two-way sweep (every code-referenced key registered; no dead registry entries) in the cache-version-sync S2 pattern. Harness shim gained `getProperties()`.
+- Earlier this session (same branch, commit 92f95d7): the redeploy update-notice — recordPresence returns the build stamp, clients compare to load-time `__BUILD_STAMP__`, one-time dismissible refresh toast.
+- Where I left off: committed + pushed; needs a NEW PR (PR #261 is merged — do not reuse). Post-deploy: expand the Health inventory once and clean/register any unrecognized keys.
+
+### Prior session (F8b — the CLAUDE.md trim pass + final sync-docs)
+Branch `claude/broad-scan-76h2dr`, **958/958 unit tests**, all doc guards green. CLAUDE.md **184,816 → 181,254 bytes** (−3.6KB; ~19.5KB headroom under the 200KB cap).
+- **Trim (F8b)**: the Top-tab router bullet MOVED to docs/client-ui-conventions.md (the F8 surface rule) with a compact index entry; the F9 cold-cache and B1-B5 late-joiner narratives relocated to fix-history; the CSV / safeChart_ / cache-anchor rules now NAME their Batch-D enforcement (S8/S3/S2) instead of carrying prose; the sub-queue bullet absorbed the L7 figures-equality nuance and was trimmed back under the 4KB ratchet; IMP-6 notes P10. Every dropped fix code / backticked identifier verified to still resolve in the live doc set (four were restored inline after the check caught them).
+- **sync-docs**: fix-history gains the Batch-F (P9/P10/P19–P22/I5/P28/S6) + F8b entries; README documents the sibling build stamping.
+- The 2026-08-27 scan is fully closed out. Remaining work is operator/owner only: run the vetting tools → un-gate the three reports; execute the Neon cutover runbook; post-deploy visual walks (S44/S45 + the journey-drill-from-modal check).
+- Where I left off: committed + pushed; branch ready for a PR.
+
+### Prior session (broad-scan Batch F — pipeline smalls, agent dark mode, pin persistence, sibling stamping)
+Branch `claude/broad-scan-76h2dr`, **958/958 unit tests** (+1), INV-16 green. Increment 154. Block: `.cycle/blocks/154-batch-f-broad-implement.md`.
+- Implemented: **P9** drill-down mirrors the R18e ext-fallback; **P10** backfillCDRHistory intra-batch IMP-6 dedup; **P19** NUL-key recovery log; **P20** drill-down rejects unparseable-start legs like the build; **P21** Q-Path ext left boundary; **P22** internal-origin hold fields originator-scoped (pinned); **I5** agent-app dark mode (shared 'dash-mode' key + toggle); **P28** Overview spotlight pins + Alt-hidden series survive rebuilds/auto-refresh; **S6** sibling buildStamp.js + deploy.sh stamping + stamp-in-Pipeline-Health-note (INV-16-safe typeof guard).
+- **Deliberately NOT implemented** (operator/owner): un-gating the three vetted reports (run the vetting tools clean first — contract forbids otherwise), Neon cutover execution (runbook is operator work; all code blockers shipped 150–152), and the L-effort rule single-sourcing (deferred; P9 + the parity suites narrow the drift surface).
+- **The 2026-08-27 broad-scan is now fully worked**: Batches A–F done across increments 150–154; what remains is operator/owner work + the CLAUDE.md trim pass + fix-history entries for Batch F (next /sync-docs).
+- Where I left off: committed + pushed to `claude/broad-scan-76h2dr`.
+
+### Prior session (broad-scan Batches D+E — enforcement tripwires + client polish/a11y)
+Branch `claude/broad-scan-76h2dr`, **957/957 unit tests** (+5), INV-16 green, assembled-client node --check green. Increment 153. Block: `.cycle/blocks/153-batch-d-e-broad-implement.md`.
+- **Batch D**: INV-06 three-window cross-pin (S1); cache-prefix SPECS completeness sweep + 4 missing entries (S2); per-prefix freshness-ANCHOR classification table, tag-anchored files must call reportFreshnessTag_() (S3); B-2 tripwire matches literal sheet opens, SmokeCheck allow-listed (S4); CI pins playwright@1.62.1 (S7); safeChart_-only + all-8-writers-route-csvSafeCell_ pins in html-include-structure (S8).
+- **Batch E**: P11 storage-blocked init() no longer dies; P15 Insights export busy-state retargeted to #dept-export-btn + insExportBusy_ re-entry guard (double-email fixed); I1 band-tile Enter/Space; I2 journey-overlay STACK-AWARE focus trap (re-arms a displaced modal trap; F-42 opener return); I3 shared wireMenuKeys_ for the three Export menus; I4 aria-live toast + role=status on 20 status blocks; P23 clipboard-rejection fallback; P24 --ink-muted/--sans defined as aliases; P27 250-row banner copy; P29 token-before-restore in both report runners.
+- **Ten client files changed → the BLOCKING ui-harness CI job is the rendered validation** (local ci:ui skipped, playwright absent). Post-deploy visual walk: Health hints/esc pills muted in both themes, View-as select sans, Export menus by keyboard, journey drill from inside the Inbound modal.
+- Remaining: **Batch F** (owner/strategic — vetting + un-gating the three reports, cutover execution, agent dark mode I5, P28 owner call, S6 sibling stamping, P9/P10/P19–P22 pipeline smalls, single-sourcing the hand-mirrored rules) + a CLAUDE.md trim pass (~15KB headroom).
+- Where I left off: committed + pushed to `claude/broad-scan-76h2dr`; the scan's Batches A–E are done end to end.
+
+### Prior session (sync-docs + Batch C + harness follow-ons — Overview/QCD/Insights/Missed narrowing accuracy, insights:v23)
+Branch `claude/broad-scan-76h2dr`, **952/952 unit tests** (+8), INV-16 + cache-version-sync + claude-md-split green. Increments: sync-docs pass (commit "sync-docs: INV-44/45 vocabulary…") then increment 152. Block: `.cycle/blocks/152-batch-c-harness-broad-implement.md`.
+- **sync-docs applied**: INV-44 gains bulkBackfill:QCD/:CSR + the P7 lock-skip note; INV-45 the P6 non-claim; fix-history gains the whole 2026-08-27 P/L family; CLAUDE.md M3 remirror call site + truthful SPECS wording + rewritten force-guard bullet (S2-2 narrative relocated); stale comments fixed (OrphanFix "only write path", four 30-min TTLs, Auth 3-col header, scope-'both', ci.mjs "two drivers", the client-conventions fragment rule); user-facing 30-minute cache copy (Help FAQ + 4 admin messages) and the holiday-less trigger hint corrected. CLAUDE.md 184.7KB / 200KB cap — **~15KB headroom, flag for a trim pass**.
+- **Batch C implemented** (L3 Overview periods/chart narrowing, L4 QCD prior-window read, L5 whole-roster Insights team accumulators → `insights:v23`, L6 ambiguous AF↔AD pairing drop, L7 figures-equality dedup) + the bulk-flow harness in csr-transfer.test.js + the coaching FLAG-GATED test restore fix. Each pinned behaviorally; details in the block.
+- Remaining from the scan: **Batch D** (enforcement holes S1–S4, S7 playwright pin, S8 source pins), **Batch E** (client polish + a11y: P11 init-killer localStorage, P15 export double-send, I1/I2/I4 keyboard-trio, P24 CSS tokens, etc.), **Batch F** (owner/strategic: vetting + un-gating, cutover execution, agent-app dark mode).
+- Where I left off: everything committed + pushed to `claude/broad-scan-76h2dr`; awaiting next batch pick (D is the cheap insurance; the cutover runbook is now unblocked end-to-end).
+
+### Prior session (broad-scan Batches A+B — inbound prior clause, backup registry, digest/coaching/login OPS-1, bulk-force guards, egress labels)
+Branch `claude/broad-scan-76h2dr`, **944/944 unit tests** (+8), INV-16 green, cache-version-sync green after the inbound:v10 bump. Increment 151. Block: `.cycle/blocks/151-batch-a-b-broad-implement.md` (verbatim summary).
+- Implemented the scan's Batch A (P3 inbound priorDr/drOutside is_internal + v10 bump synced across 6 docs, P5 outbound_calls in the Neon backup, P6 digest O-9 marker port, P8 bulk-force QCD/CSR guards via a queueToPendingArchive count return, P16 vetting TZ window, P18 prune wrong-workbook fallback → loud failure) and Batch B (P13 coaching pending-notify retry via COACHING_NOTIFY_PENDING, P14 login-notify seen-after-send, P26 per-sheet forceDeleted threading so force guards fire only on real deletions, P30 egress labels for agentHome/caller-lookup/callJourney).
+- **INV-44 doc owes two new step names** (`bulkBackfill:QCD`/`bulkBackfill:CSR`) + the increment-150 lock-skip note; fix-history owes this batch's entries; CLAUDE.md M3 still owes the remirror call-site mention. Run /sync-docs.
+- Latent suite trap noted: coaching.test.js's FLAG-GATED test `delete`s the real coachingDeliveryRun_ vm binding (new tests reinstall a load-time reference; fix properly later).
+- Remaining scan work: Batches C (pre-flag data accuracy L3-L7), D (enforcement holes S1-S4/S7/S8), E (client polish + a11y), F (strategic/owner items).
+- Where I left off: A+B committed + pushed to `claude/broad-scan-76h2dr` on top of increment 150; awaiting the next batch pick.
+
+### Prior session (broad-scan Top-5 fixes — recipients, watchdog OPS-1, AF routing, lock-skip telemetry, outage-cache guards)
+Branch `claude/broad-scan-76h2dr`, **936/936 unit tests** (+8), INV-16 green. Increment 150. Block: `.cycle/blocks/150-top5-broad-implement.md` (the verbatim summary).
+- Full three-stage /broad-scan ran first (8 parallel subsystem audits + a Stage-2 deep-dive pass); the Top 5 by production impact were implemented in this same session: **P1** Alerts recipient lookup now role-aware (agent rows excluded — the teammate-identity privacy leak), **P2** DqeSilenceWatch persists streaks only AFTER a CONFIRMED send (OPS-1), **P4** dup-guard re-mirror routes AF via the SLOT sanitizer (M3, both INV-16 copies), **P7** onChange lock-skip logs an `autoImport` failure Pipeline Health row, **L1/L2** getDepartmentSummary + getCompanyOverview no longer cache the Neon-outage EMPTY payload (the R8-C1/B-3 discipline, closing the two readers that missed it).
+- **The rest of the scan's findings are NOT implemented** — the prioritized batch plan (batches A–F with efforts) was delivered in-session; key next-up: P3 (inbound priorDr is_internal), P5 (outbound_calls backup registry), P6 (digest marker port of O-9), P8 (bulk-force CSR guard), the enforcement-hole batch (S1–S4), and the a11y trio (I1/I2/I4).
+- Doc syncs owed (see the block): CLAUDE.md M3 sentence gains the remirror as a third AF call site; fix-history entries for the six codes.
+- Where I left off: fixes committed + pushed to `claude/broad-scan-76h2dr`; awaiting owner's pick of the next batch.
+
+### Prior session (R17i — one definition of "these rings are one call")
+Branch `claude/broad-scan-l9ojgm`, **669/669 unit tests** (+8), INV-16 green, UI gate 56/56 + 16/16 + 30/30 + 14/14. Increment 103. Block: `.cycle/blocks/103-r17i-grouping-extraction.md`.
+- **Closed the OBJECTIVE half of R17h's follow-on and deliberately left the subjective half.** The RULE (consecutive + same parentId + same date) was written twice with nothing making the copies agree — the INV-16 drift class. It is now `groupConsecutiveByCall_` (script-1-core.html), returning runs and rendering nothing. The RENDERINGS stay different on purpose: the card has no visible "rang N×" (owner R17a, hover only) and puts the siren/badge on the LAST ring; the lens shows the count on the FIRST.
+- **The two callers feed DIFFERENT sequences, which is why the helper returns runs rather than markup:** a card iterates ONE agent's rings (a run = that agent rung repeatedly), a lens iterates a slice sorted chronologically ACROSS agents (`missedSliceFilter_`), so a run there can span agents.
+- **⚠ Harness fixture counts are NOT a regression signal.** Probe ring counts moved 174→188 and it looked like a regression; `gen-payloads.js` seeds its RNG (42) but takes its date window from the REAL CLOCK, so a mid-session regeneration slid it (meta latest 08-10 → 08-11). Verify refactors by A/B, not by diffing probe output across a day boundary.
+- **Verified decisively:** both OLD loops restored verbatim in a throwaway script vs the new helper over 200k randomized ring lists (null ids, repeated ids, date changes, lengths 0-8) — ZERO mismatches on both. The old loops are deliberately not kept in the suite (a second authority that drifts).
+- **`tests/unit/call-grouping.test.js` is the FIRST unit coverage of client-fragment logic** — lifts the declaration out of the fragment by brace-matching and evaluates just it (zero-dep, no jsdom), mirroring html-include-structure.test.js's text technique. Pins adjacency, the null-id rule, exact input coverage, and that BOTH call sites still call the shared rule.
+- **NET 0 − 0 = 0** — refactor + coverage, behavior provably unchanged.
+- **Where I left off:** committed, pushed, PR opened + merged (R17e/f/g/h/i together). Deploy is Department Dashboard only. Remaining follow-ons: the abandons lens has no sparse-date mode (admin-only heatmap cell drill, low value); the bucket drill's empty-state wording is now the shared renderer's.
+
+### Prior session (/broad-implement — R17h: Options A+B, the missed-slice consolidation)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests**, INV-16 green, UI gate **56/56** (was 50) + 16/16 + 30/30 + 14/14. Increment 102. Summary block: `.cycle/blocks/102-r17h-broad-implement.md`.
+- **Option A: the hour-bucket drill was the last missed-list on private markup** — it now renders through `missedSliceListHtml_`, so all four drills (bucket / per-queue / day / heatmap-cell) share one visual language. `.bucket-detail-list`, `.bucket-detail-empty` and the bucket-scoped `.ring-*` rules are retired; the queue-only list keeps its own.
+- **The port was a DENSITY REGRESSION until the sparse-date mode landed, and that is the reusable lesson.** A date header exists to stop the date repeating per row; in a slice averaging <1.5 rings per date (bucket + heatmap-cell drills — one half-hour across many dates) every header served ONE row at ~3x the cost, in the page's shortest panels — ~6 visible rings vs ~12 before. Under that ratio the list goes flat with an inline date chip. Dense slices can't trip it by construction (day drill = one date; queue drill = a window), so they render unchanged.
+- **Option B cross-links both directions:** a drill row's agent name → that agent's card (spotlit, `<details>` chain opened); an agent card's ring time → the DEPT-WIDE hour bucket for that half-hour (`show`, never `toggle`, or clicking a ring would close the bucket it meant to open). Option A is what let one edit give all four drills the agent link.
+- **Regression found and closed mid-implementation:** the Inbound report is a MODAL over the dept page running the same shared renderer — ungated, its rows offered agent links that spotlight a card *behind the modal*. `missedAgentCardExists_` now requires `data-page==='dept'` and no open modal; both states probed live.
+- **Two deliberate positions worth not re-litigating:** the links are link-styled SPANS, not buttons (a day slice is hundreds of rings = hundreds of tab stops; both destinations are separately in the tab order, so nothing is keyboard-unreachable), and `missedAgentCardEl_` matches by ITERATION rather than a `[data-agent-card="…"]` selector, since agent names are external CDR text and a quote breaks the selector string.
+- **NET 0 − 0 = 0** — owner-requested consolidation on correctly-working surfaces, not a bug fix; the one failure mode it could have introduced was caught pre-ship.
+- **Where I left off:** committed + pushed; PR on the owner's word. Follow-ons in the block: the agent cards and the shared lens still hold two same-call grouping implementations (`ms-callgroup` vs `hd-run`), and the ABANDONS lens has the same sparse-date shape but was left alone to keep this change to the renderer Option A named.
+
+### Prior session (R17g — header date cleanup, share overflow, tile centering + the consolidation investigation)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests**, INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 101. NOT yet PR'd.
+- **The Insights header date chip is HIDDEN when the report covers the page controls' window** (the normal case — the dept controls are the single date authority, M4) and survives WARN-TINTED ("(scoped: …)", `.ins-results-date--scoped`) when a monthly trend-point drill diverges the two — a split range stays visible, never silent. The workday count moved to the sticky controls strip (`#dept-workdays`, `updateDeptWorkdays_`: S5 client mirror every refresh, refined by the server INV-35 count from a same-window Insights render; a diverged render passes 0 so the strip keeps the DEPT window's number).
+- **Call-share overflow root cause:** the card inherits `.ir-chart-wrap`'s fixed 420px canvas height, but the tally is DOM rows — a real roster spilled past `overflow: visible` into the drills below (the 5-agent fixture fits, which is why no probe saw it). Now auto-height capped at 560px with the ROWS scrolling internally.
+- **Panel-1 tiles** get the flex-center treatment (Abandoned % sat top-anchored at the equal grid height).
+- **Consolidation investigation (NO CHANGES — owner decision pending):** five missed/abandoned list surfaces, all slices of two stores; 3 of 5 already share renderers. Real redundancy: the missed chart's hour-bucket drill still uses its own older `bucket-detail-list` renderer, and the agent cards vs the shared lens carry two same-call grouping implementations. Recommended Option A (port the bucket drill onto the shared renderer, nothing removed); Option C (universal explorer) recommended AGAINST — kills in-context affordances and risks blurring the settled DQE-vs-inbound definition split. See `.cycle/blocks/101-*.md`.
+- **Where I left off:** committed + pushed; PR on the owner's word. Consolidation awaits an A/B/C pick.
+
+### Prior session (R17f — follow-ups on the R17e round)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests**, INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 100. NOT yet PR'd — R17e + R17f ride together on the owner's word.
+- **Panel-1 tile values 15px → 18px** — R17c's shrink served a one-line split that has been two-line since that same round.
+- **Email tally widened instead of slimmed:** the "Abandoned %" column is 190px (was 150 — the Viol column had slack), block cells back to 4px+1px from R17e's 3px slivers, ceiling and 20-calls/block landing unchanged. The comment now carries the full width-budget math (25×5px + ~45px label + padding = 186 ≤ 190).
+- **Both lens tables gained a meaningful row treatment:** missed-rings groups CONSECUTIVE same-parentId rings as a connected run (warm rail, id badge once, "rang N×" — the R17a grouping applied here; adjacency is the key on purpose, a later same-id ring is a re-rung call), and the abandons lens carries a stage tick (warm = queue, accent = on hold, muted = IVR; redundant with the text on purpose).
+- **Where I left off:** committed + pushed. Deploy is Department Dashboard only. When the owner approves, PR + merge R17e+R17f together, then restart the branch from origin/main.
+
+### Prior session (R17e — post-deploy polish round from the owner's screenshot)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests** (queue-report 39/39 after re-targeting three pins), INV-16 green, UI gate 50/50 + 16/16 + 30/30 + 14/14. Increment 99. NOT yet PR'd — owner reviewing.
+- **The one real bug: the Queue Call Data panel rendered HALF-width for every multi-queue dept.** The carousel is a single child of the `#dept-qcd-tiles` grid, and R17c's side-column `1fr 1fr` override put it in column 1 with its tiles overflowing the track. `.dept-qcd-carousel { grid-column: 1 / -1; }` — the span `.dept-qcd-queue-row` already had. Single-queue depts never showed it, which is why R17c's probes missed it.
+- **Daily-breakdown lenses:** each is its own bordered `--paper` card on the row's `--paper-2`; the abandons lens displays CHRONOLOGICALLY (display-only re-sort AFTER the newest-N cap, so the truncation note stays true — the SQL's DESC order is what the cap semantics need); `meta.reconcileNote` is a hover-ⓘ on the heading now, not a text box (the R16i ships-with-the-data rule survives, only the form changed).
+- **`#ins-team-detail` joined the fold store** (`data-fold="detail"`, matched by bare attribute — it lacks `.ins-fold`): open by DEFAULT for everyone (unlike qh/trend's role seed), persisted per user, pre-R17e blobs without the key read as open.
+- **Call-share delta is color-coded** (sage above / warm below the equal share, muted under 2 pts) — deliberately overrides R17c's neutral-gray ruling, owner asked. Team Rings KPI cards center vertically.
+- **Email tally: "20 calls/block" was a CEILING change, not a unit constant.** Cells slimmed 5px+2px → 3px+1px, `TALLY_MAX_BLOCKS` 14 → 25 (25×4px=100px, under the ~112px squeeze threshold), so the ladder lands on unit 20 for a ~350–500-call queue day where 14 forced 50. Measured post-change: uniform 3px blocks across rows.
+- **One probe artifact fixed:** drive-devoverlay's App-state assertion sampled 400 chars of the overlay; the default-open fold's extra RPC pushed "App state" past the slice. Slice widened to 2000 with the why.
+- **Where I left off:** committed + pushed, awaiting owner review before PR/merge. Deploy is Department Dashboard only. Owner's open question (merge the two lenses?) answered in chat: keep TWO — different sources/definitions, an interleaved merge invites row-level reconciliation that structurally can't exist; they're now visually tied instead.
+
+### Prior session (R17d — the Calendar is always available, year-to-date by default)
+Branch `claude/broad-scan-l9ojgm`, **661/661 unit tests** (+1), INV-16 + cache-version-sync + claude-md-split green, UI gate **50/50** (was 46) + 16/16 + 30/30 + 14/14. Increment 98.
+- **The year-to-date series costs no extra read, and that is the whole reason this was cheap.** `computeInsights_` already walks 12 months of rows for the monthly rollup; Jan 1 of the end year is always inside that span, so `trendYtd` is a second accumulator on the same pass, inside the same `inTrend && isRoster` branch — inheriting the INV-53 roster gate by construction instead of by a parallel rule that could drift. `insights:v20`.
+- **One decision function, four readers.** `insCalendarUsesYtd_` alone decides which series is on screen; eligibility, the renderer, the header and the ineligible-reason text all call it. In YTD mode the month list, the month-reset key AND the per-cell in-window gate must all come off `trendYtd.from/.to` — leaving any one of them on `meta` blanks most of the year while the rest of the grid still looks right.
+- **The caption is load-bearing.** Cells describing the year under a page scoped to one day read as that day's data — the misreading the old refuse-to-render gate avoided by rendering nothing.
+- **A rare fallback became the common path, and it was wrong.** The day-drill's out-of-window branch re-ran only the Insights window, which under YTD splits the page's two halves onto different ranges — exactly what R16g removed. It now moves the DEPT controls and re-lands on the Daily breakdown via a one-shot pending consumed at render end.
+- **The harness served ONE 30-day Insights payload for every span**, so the single-day shape the dept page renders BY DEFAULT (INV-43) was never exercised and the YTD branch was unreachable from the gate. `insights-day` is now captured and the stub picks by span.
+- **NET 1 − 0 = 1.** The requested feature plus a fixture gap closed; the one failure mode it introduced is fixed in the same increment.
+- **Where I left off:** committed, pushed, PR opened + merged. Deploy is Department Dashboard only. **Walk S37 + S14**, and specifically: default single-day window → Trends → Calendar → confirm the captioned year renders and an out-of-window day-click moves BOTH halves. Open: the QUEUE metric still refuses a short window (its series is window-scoped; a YTD version would be a real extra read, unlike this one).
+
+### Prior session (/broad-implement harness single-dept fixture — found a live dept-switch bug)
+Branch `claude/sync-commands-dnxgcv`, **590/590 unit tests**, UI gate 24/24 + 16/16 + **31/31** (was 24). Increment 67.
+- **The fixture work immediately surfaced a PRODUCTION bug: the header department selector threw and did nothing for every admin.** `selectOption('#dept-selector','Sales')` raised `ReferenceError: prLastRoster is not defined` — the change handler still cleared roster caches belonging to the Performance and Compare Ranges reports, retired and DELETED long ago. script.html is `'use strict'`, so the assignment threw, and it threw on the line BEFORE `refresh()`. Two dead lines deleted.
+- **No automated check had ever switched departments**, which is exactly why it survived. The switch is now asserted two ways: that it doesn't throw, AND that the row count actually changed (CSR 7 → Sales 4) — a no-throw check alone would pass if the handler ran but the refresh never landed.
+- **No fixture DATA change was needed for the single-dept payload**, which is worth knowing before someone adds agents for it: Sales's seeded child `PAP` is absent from the harness roster and `subQueueChildMap_` drops edges naming a non-existent dept, so Sales ALREADY renders like the 11 of 14 real depts with no sub-queue. Adding a Billing profile (the other candidate) would have shifted the company Overview payload for every other driver.
+- **Restored coverage:** a sub-queue-less dept renders no relationship bar / group headers / subtotals but still renders agents and a totals row, and its CSV has NO leading `Department` column and no subtotal or `All shown` rows — the byte-compatibility promise to every dept that never had a sub-queue.
+- **Both verified by breaking them:** restoring one `prLastRoster` line reproduces the exact production error and leaves Sales showing CSR's 7 rows.
+- **NET 1 − 0 = 1** — a continuously-firing production bug on the primary admin control, fixed by deleting code.
+- **Where I left off:** committed + pushed. **S2 (admin switches departments) needs a live walk after deploy** — it is the scenario that should have caught this and evidently wasn't being run. Deploy is Department Dashboard only. **Open argument worth acting on:** the `ui-harness` job still carries `continue-on-error: true`, so all 31 assertions are advisory; this increment is a concrete case for dropping it. Other header controls (view-as-manager, theme/mode toggles, the Export dropdown beyond the CSV item) still have no automated interaction and are candidates for the same failure class. Phases 3/4 remain all-queue; the Insights combined view is still unstarted.
+
+### Prior session (/broad-implement — scope switcher retired for collapsible groups)
+Branch `claude/sync-commands-dnxgcv`, **590/590 unit tests**, UI gate 24/24 + 16/16 + 24/24, INV-16 + cache-version-sync + claude-md-split green. Increment 66.
+- **The owner concluded the three-way scope switcher was over-built, and they were right.** Every view it offered is reachable by collapsing a group — "<dept> only" IS the combined view with the sub-queue collapsed — and each dept's subtotal stays on screen either way. The tabs cost a SERVER ROUND TRIP per view to show the same thing.
+- **The group HEADING ROW is now the control.** Collapsing hides agent rows and deliberately KEEPS the subtotal; that is the whole point and exactly what made the tabs redundant. Default EXPANDED so the combined view is unchanged on open.
+- **The client no longer sends `subScope`; the SERVER still honors it** (CSV Department column, combined default). Client retirement, not capability removal — the comment says so, because the obvious later "fix" is to restore a parameter that was never broken.
+- **A sub-queue's group header carries the ONLY route to its missed calls.** Phase 3 can't merge that section (queue abandons would double-count), and the tabs were previously that route. The button re-scopes + scrolls; the note offers "Back to <parent>"; the override RESETS on any dept/window change, since a child's missed calls pinned under a different parent would be wrong rather than stale.
+- **Aggregate rows scaled up** (text + bar height) so totals and subtotals read as a different KIND of number. Asserted by measuring RENDERED font-size, not a class — the first attempt measured `td:first-child` and failed, because the label cell is uppercase letter-spaced type that is legitimately smaller in px.
+- **Driver assertions were REPLACED, not supplemented** — one that still passed with the tabs present wouldn't be testing what shipped. Two were re-targeted rather than deleted: S35 parity now compares against the SERVER's own-scope payload (the property itself, not a UI proxy), and the multi-slot SWR check flips DATE RANGES instead of scopes.
+- **One assertion was genuinely LOST and is named:** "single-dept CSV has no Department column" needed the retired `own` tab to make a one-dept payload; the fixture has no sub-queue-less dept. S43 was rewritten to carry that step manually. A fixture for such a dept would restore it.
+- **NET 1 − 0 = 1** — fixes a real owner-reported slowness; no new failure mode.
+- **Where I left off:** committed + pushed, NOT deployed. PR #211 (roster-scoped audit, idle/unmapped roll-call, call-id sampler) may still be open — check before opening another. Deploy is Department Dashboard only. Tell Sales/CSR/Power managers the tabs are gone. Walk S43 (incl. its new single-dept step), S4, S6, S35. **Next:** Phase 3 (Missed, `missed:v18`) and Phase 4 (IR/Insights, `insights:v20`) are still all-queue, so an IR run for a sub-queue disagrees with My Department for a crossover agent. Open: a harness fixture for a dept with no sub-queues; `meta.subQueueAgentHint` is now unambiguously dead (it was read by the retired own-scope branch); the Insights combined view still unstarted.
+
+### Prior session (/broad-implement queue-split Phase 2 — the reported bug is FIXED)
+Branch `claude/sync-commands-dnxgcv`, **581/581 unit tests** (was 571; +10), INV-16 + cache-version-sync + claude-md-split green, UI gate 24/24 + 16/16 + 19/19. Increment 65.
+- **This is where the owner's reported bug actually gets fixed.** Phase 0 corrected the combined total; Phase 1 captured the data; Phase 2 makes a department's view show only ITS OWN queues' calls.
+- **`applyQueueSplitToRows_` is a PRE-PASS, not edits inside the loop.** It rewrites the six per-agent metrics from the dept's slice before `computeSummary_` aggregates, so E5, the INV-53 floater gate, diagnostics and the totals row all inherit the fix without any of them learning what a queue is. That function is the most heavily pinned in the app; narrowing at the boundary keeps every rule inside it untouched.
+- **Fails open THREE ways** — unmapped dept, row with no split, unparseable JSON — because showing a department zero calls is far worse than showing it too many. Each path is tested separately.
+- **Phase 2 INVERTS Phase 0, and that is the one place the two could silently fight.** Phase 0 subtracts a crossover agent's repeat because both depts carried identical all-queue figures; once narrowed the two rows PARTITION the day, so summing is correct and subtracting would under-count. A `queueScoped` row now returns before the de-dup and never enters the seen map. Judged per ROW, because a range spanning the cutover holds both kinds. Pinned by its own test.
+- **ATT is recomputed on the queue's own denominator** (t/n), not scaled. `avgAbdWait`/`csrAvgAbdWait` are deliberately NOT narrowed — the pipeline stamps one per-DAY value on every row, so they were never per-agent.
+- **Queue names matched case-insensitively against `inboundQueuesForDept_`** (the raw-name union). Matching `queuesForDept_` alone would silently drop CSR's main queue — the R8-1 lesson.
+- **Reads clamped `Math.min(QUEUE_SPLIT, getMaxColumns())`** in both Data.gs and the DAL: the sheet is 34 wide until Phase 1 runs against it, and an unclamped read throws (REP-10). At 34 every row fails open to the rollup, so deploying the dashboard ahead of the pipeline is harmless.
+- **The disclosure is warn-tinted on purpose** (`subqSplitNote_`): it changes how the numbers above it should be read, so it must not look like a footnote. Three states (unmapped dept / no split in range / partially split), silent once the range is fully split.
+- **The one risk worth naming:** a dept whose queues are mapped WRONG now under-reports where it used to over-report. Only the fully-unmapped case fails open, so a dept missing ONE of its queues is invisible without checking Dept Config. Spot-check per dept after deploy.
+- **NET 1 − 0 = 1** — fixes the reported bug; no new failure mode (all three uncertainty paths fail open, the read widening is clamped).
+- **Where I left off:** committed + pushed, NOT deployed. **Phase 2 does nothing until Phase 1 has run** — deploy cdr-import + cdr-report first, force re-import the surviving ~14 dates (time-critical: Call_Legs is pruned at 14 days), then the dashboard + a new deployment version. Verify each dept's Dept Config queue mapping early. Walk S35 (a crossover agent's two rows should now show DIFFERENT numbers summing to their old single figure), S6, S4. **Next: Phase 3** (Missed report — timelines + hour-of-day chart still all-queue; the split already carries `mt` for it, but AD/AE/AF need the same earliest-leg attribution) then **Phase 4** (IR/Insights — still all-queue, so an IR run for a sub-queue disagrees with My Department for a crossover agent). Open: no UI-harness coverage of the split note (fixture has no crossover agent); `meta.subQueueAgentHint` dead reference; the Insights combined view still unstarted.
+
+### Prior session (/broad-implement queue-split Phase 0 + Phase 1)
+Branch `claude/sync-commands-dnxgcv`, **571/571 unit tests** (was 556; +15), INV-16 + cache-version-sync + claude-md-split green, UI gate 24/24 + 16/16 + 19/19. Increment 64. Also this session: the CSS-outside-`</style>` production bug (`0fb6b76`) and the split PLAN (`0d8d000`).
+- **The reported bug:** an agent on two rosters (CSR + Spanish) shows the same all-queue numbers in BOTH depts' views. Root cause is upstream — a DQE row is keyed on (Date, Agent) with no queue dimension and `buildDQEHistoricalData` filters legs by agent name alone.
+- **Two symptoms the report did NOT mention, and worse:** in a combined view the crossover agent appears as TWO rows and the grand total counts their calls TWICE. Found by reading `combineSummaries_` rather than by looking at a screen.
+- **Phase 0 (shipped):** `combineSummaries_` subtracts each repeat appearance. Built as a CORRECTION PASS over the untouched accumulation, not a re-derivation from `rows` — so a no-crossover combine is byte-identical *by construction*, and the totals don't become coupled to `matchedViaRoster` being set on every row. I built the re-derivation first and it broke four fixtures that don't set that flag; that coupling is exactly what the correction pass avoids.
+- **Subtotals stay UN-deduped on purpose** (each must equal that dept's own view, S35), so the grand total can now be LESS than their sum. That had to be captioned in BOTH the table and the CSV — trading a wrong number for an unexplained one would not be an improvement, and a spreadsheet reader is likelier to add the subtotals up.
+- **Duration means deliberately NOT deduped.** A doubled sum is arithmetically wrong; a mean weighting one agent twice stays in range, and recomputing would move the number for EVERY combined view. Phase 2 dissolves it.
+- **Phase 1 (shipped):** new pure `dqeQueueSplitForAgent_` writes DQE col **AI** (JSON keyed by raw queue name) plus `dqe_history.queue_split` through every writer. **Key the split on queue NAME, not extension** — `getDeptQueueExts_`'s derived mode is circular for exactly this case (a crossover agent teaches Spanish that the CSR extension is Spanish's).
+- **The reconciliation rule is the load-bearing part:** leg-level figures partition by each leg's own queue, parent-level ones by that parent's EARLIEST leg. Without it an overflow call ringing one agent through two queues is counted twice and the split silently exceeds the rollup, which would surface later as a dashboard bug rather than a pipeline one.
+- **The additive guarantee is asserted, not claimed:** all 11 pre-existing pipeline tests pass UNMODIFIED, and the new suite freezes cols A–AH as literals. The split call is try/catch-wrapped so a defect in it can never cost a day of history.
+- **The trap that would have lost a day:** Sheets does NOT auto-expand columns — `getRange` past `getMaxColumns` throws (REP-10) — and every production sheet is 34 wide, so the first build after deploy would have thrown. The build now widens to 35 first. Same clamp applied to the deferred mirror and both backfills.
+- **`backfillDQEHistoryUpsert` would have wiped every split** (DO UPDATE without the field). Fixed, and every upsert COALESCEs so a sheet-sourced NULL can't erase a stored value.
+- **NET 1 − 1 = 0** — Phase 0 fixes a bug firing in production now; Phase 1 adds two operations that can fail where nothing could before (sheet widen, Neon ALTER), both guarded and precedented but not free.
+- **Where I left off:** committed + pushed, NOT deployed. **Deploy is time-critical for Phase 1**: `Call_Legs` is pruned at 14 days, so every day undeployed is a day permanently unsplittable. Order: cdr-import, then cdr-report, then the dashboard (+ new deployment version), **then force re-import the surviving ~14 dates** to capture their splits. Also still pending from earlier: the CSS fix, the F1b inbound queue recognition, the `final_dept` fallback, and the whole sub-queue feature. **Next: Phase 2** (`computeSummary_` consumes the split, `summary:v18`) — that is where the REPORTED bug actually gets fixed; Phase 0 only corrected the total. Then Phase 3 (Missed, `missed:v18`) and Phase 4 (IR/Insights). Open: the Insights combined view (still unstarted); `meta.subQueueAgentHint` dead reference; AD/AE/AF not split (Phase 3).
+
+### Prior session (owner rulings recorded; unmapped-label entry-queue fallback; /sync-docs)
+Branch `claude/sync-commands-dnxgcv`, **553/553 unit tests** (was 546; +7), INV-16 + cache-version-sync + claude-md-split green, UI gate 24/24 + 16/16 + 19/19. Commits `5d9d705`, `9d6541d`, plus this sync-docs pass. **THE DEPLOY IS NO LONGER BLOCKED** — every pre-deploy question from increments 53–63 is now answered.
+- **Phase 0's blocking action is CLOSED.** Owner ruling: *"Managers of parent dept should have access to child queue data (including agents in that queue)."* Recorded in INV-38, CLAUDE.md's sub-queue decision, and Operator State #39, each with the revocation knob (clear that dept's `Overview Parent` cell), so it can't be re-opened as a suspected accident.
+- **`Field Ops Power` is CLOSED too, and NOT the way four increments assumed.** Owner: it "isn't necessarily a child queue in the same way as the other child queues and should still be represented as a separate queue, but the same manager(s) should be able to see both." So the answer is **two Access Control rows** (Tier C multi-dept manager), NOT a parent-map edge. That distinction is now documented in four places because the `Overview Parent` cell does FOUR things (nest the tile, enable the combined view + subtotals, fold the child's queues into the parent's QCD rollup, confer access) and only the last was wanted here. **Do not "finish" the parent map by adding it.**
+- **A real hole in the 2026-07 `final_dept` fix, found by the owner's config work and FIXED (`inbound:v7` / `inboundHeatmap:v2`).** `inboundDeptPredicate_`'s two arms are exclusive on the on-hold flag, so an on-hold-abandoned call whose label was mapped to NO dept had the entry-queue arm skipped and attributed to **nobody** — the same silent-disappearance bug the fix was meant to close, relocated from "no map exists" to "this label isn't in it". Unmapped labels now fall back to `entry_queue`. The label map is an OVERRIDE for genuine cross-dept answering, not a prerequisite for being counted.
+- **The load-bearing detail is the UNION, not the per-dept list.** The fallback gates on `getAllFinalDeptLabels_()` (every dept's labels) because a per-dept list can't separate "another dept's label" (that dept counts it, no fallback) from "nobody's label" (fall back) — gating per-dept would have counted every cross-dept on-hold call TWICE and pushed dept totals above the company total. Fails OPEN: unreadable config ⇒ empty union ⇒ everything falls back, degrading attribution without losing calls and never double-counting. Blank/NULL `final_dept` is coalesced so it takes the fallback instead of vanishing to three-valued logic (the L10 lesson).
+- **Both new bug classes verified by breaking them:** gating the fallback per-dept fails the double-count test; removing the fallback fails all three fallback tests.
+- **A correction I had to make to my own earlier proposal.** The known-issues mapping table had both `Field Operations (...)` labels pointing at `Field Ops`. The owner found they appear **interchangeably** for agents in the Field Ops AND Field Ops Power queues, so no mapping is correct for either — save validation refuses a shared label on both (one-call-one-dept), and mapping it to one steals the other's calls. The table now records both as deliberately blank, with a note not to "complete" it later; the fallback is what makes blank correct rather than data-losing, since the two queues have **no crossover agents**.
+- **/sync-docs (applied), two real finds.** (1) **README was stale since PR #197** — it presented Access Control as one-row-or-`ALL` with no mention of multiple rows per email, which is exactly the mechanism the Field Ops Power ruling needs. (2) The accessor finding-aid bullet didn't name `getAllFinalDeptLabels_`, whose fail-open contract is load-bearing. Checks 2 clean (76/76 paths both directions, no unlisted source file); the `inbound:v7` cache mentions were caught by the guard during the commit, in four files.
+- **NET SCORE 1 − 0 = 1** — one real production bug fixed (on-hold calls attributing to nobody on any unmapped label), no new failure mode.
+- **Where I left off:** committed + pushed. **DEPLOY IS THE NEXT ACTION AND NOTHING BLOCKS IT.** Order matters: **CDR Import FIRST** (`cd apps-script/cdr-import && clasp push -f`) because F1b's brand-prefixed queue recognition is losing inbound attribution daily and dates past the ~14-day `Call_Legs` retention are unrecoverable; **then Department Dashboard** (`clasp push -f` from repo root **+ a new deployment version** — the push alone doesn't move the deployment, Operator State #2). Operator actions after that: give shared Field Ops / Field Ops Power managers a second Access Control row; **clear** the two `Field Operations (...)` labels if they were entered against Field Ops; re-run `runInboundQcdParityCheck` (expect the mapped labels to cover **140 of 146**, not 145 — the 5 Field Operations calls now attribute by entry queue); walk S4/S6/S11/S13/S35/S37/S40/S43. Then: **(1) the Insights combined view — own session, `insights:v19→v20`; (2) drop `continue-on-error: true` from the `ui-harness` CI job.** Smaller open items unchanged: the weighted-duration half of S35's addendum isn't automated; `meta.subQueueAgentHint` is still a dead reference; the missed section's `all` scope stays a documented partial; re-run the QCD parity gate if `QCD_READ_SOURCE=neon` was ever set on a default-range pass.
+
+### Prior session (/sync-docs + /broad-implement harness fixture & CSV coverage; Insights combined view NOT started)
+Branch `claude/sync-commands-dnxgcv`, **546/546 unit tests** (unchanged — the new coverage is necessarily browser-side), INV-16 + cache-version-sync + claude-md-split green, UI gate now **24/24 + 16/16 + 19/19, all stages passed**. **No `apps-script/` file changed in the implement half — nothing new to deploy.** Increments 63 (+ the sync-docs pass).
+- **/sync-docs (applied), three finds.** (1) **S35 was stale in a way that mattered** — I'd named it as THE post-deploy check in three consecutive increments, but its text still described only the Phase D floater validation with nothing about `deptGroups`, per-dept subtotals or the combined grand total. It now carries an addendum with the three comparisons that actually catch a regression (parent subtotal == its own-scope total to the digit; counts sum; durations are the agent-count-WEIGHTED mean, not a mean of means). (2) **The S41/S42 numbering collision is finally resolved** by PROMOTING the two never-numbered perceptual checks from increment 54 (theme×mode sweep, narrow-viewport reflow) rather than leaving an un-numbered TODO blocking every new scenario — which unblocked **S43, the first regression scenario covering CSV export at all**. (3) The agent-table column-model bullet described the CSV as "all columns + the bar + Answer %", which stopped being the whole story in increment 62. Checks 2+3 clean (76/76 paths both directions; the same 11 benign properties).
+- **⚠ ITEM 3 OF 3 — the Insights combined view — was NOT STARTED, deliberately.** I measured it first: `InsightsReport.gs` is 992 lines with 23 references to the team-comparison fields, and the client has 93 `ins*` functions with 15 more touch points on them. A combined view means per-dept team rollups threaded through the KPI tiles, share donut, per-agent cards, trend chart AND the Insights↔My-Department hand-off, plus `insights:v19→v20`. Starting it with the context left would have produced a half-wired report, and Insights is the flagship surface where a half-wired team average is worse than no feature. **Nothing is broken while it waits** — Phase 2's one-dept-per-run rule is the correct interim behavior, and a parent manager reaches a sub-queue's Insights via its picker group. **Give this its own session.**
+- **What DID ship: the untested-client-surface problem is closed for the sub-queue work.** New `drive-subqueue.js` with **19 asserting checks**, wired as the gate's THIRD driver. Covers the scope bar (all three options, combined default), the note in every scope including `own` where it must disclose the exclusion, the grouped table with the child tagged, per-dept subtotal rows, all 7 agents across both depts, the switch dropping the grouping, and the missed section's scope note.
+- **A pleasant surprise worth recording: the harness fixture was ALREADY parent/child capable** — the roster nests `Spanish` under `CSR` via the `OVERVIEW_PARENT_OF` constant, so the default CSR payload was already the combined view. Only the missing scopes needed adding (`summary-30d-own` / `-subs`) plus a subScope-aware stub. Checking before building saved writing a fixture from scratch.
+- **The S35 parity property is now AUTOMATED** — the driver reads the CSR subtotal from the combined view, switches to `own`, reads the totals row, and compares every numeric cell. That property is what makes the combined view trustworthy, and it was previously only checkable by a human with two screenshots.
+- **First automated CSV coverage in the repo (S43).** The exporter Blob-and-clicks, so the driver stubs `URL.createObjectURL` and asserts the REAL bytes: single-dept has no `Department` column (byte-compatibility), combined leads with it and carries both subtotals + an `All shown` total, and there are no group-header banner rows.
+- **Both new assertion classes verified by breaking them:** removing the CSV Department header fails the column check; making `combineSummaries_` mutate a part it should only read (`t.totalRung += 1`) fails the parity check with a visible off-by-one — exactly the silent bug class that property exists to catch.
+- **NET SCORE 0 − 0 = 0** — no production bug fixed; one defensive item, but the one that changes the odds on every future sub-queue change, which is why it came before item 3 rather than after.
+- **Where I left off:** committed + pushed. **Nothing to deploy from THIS increment** (harness-only), but increments 53–62 are all still undeployed and **Phase 0's blocking action still stands** (confirm the four seeded parent pairings should confer access at all). **Next, in the order I'd do it: (1) the Insights combined view — own session, `insights:v19→v20`; (2) drop `continue-on-error: true` from the `ui-harness` CI job** — three asserting drivers are green now, and until that line goes every one of these checks is advisory; (3) DEPLOY, which is the real blocker on all of it being worth anything. Smaller open items: the weighted-duration half of S35's addendum isn't automated (needs a fixture where two depts' durations differ); `meta.subQueueAgentHint` is still a dead reference — wire it as an agent count or remove; `Field Ops Power` isn't in the parent map — owner to confirm; the missed section's `all` scope stays a documented partial. Also: the 12 Dept Config `Final Dept Labels` rows aren't entered, and the QCD parity gate should be re-run if `QCD_READ_SOURCE=neon` was ever set on a default-range pass.
+
+### Prior session (/broad-implement the CSV gap + Phase 3 — Missed & Escalations)
+Branch `claude/sync-commands-dnxgcv`, **546/546 unit tests (UNCHANGED — no new tests, see below)**, INV-16 + cache-version-sync + claude-md-split green, UI gate **24/24 + 16/16**. No cache version changed. Deploy: **Department Dashboard** (script.html, dashboard.html). Increment 62.
+- **CSV gap closed.** `exportTableCsv_` adds a leading **Department** column ONLY when >1 dept is shown, so a single-dept export is byte-identical; rows are emitted per dept, each followed by that dept's OWN subtotal from `deptGroups`, then a grand total labelled `All shown`. The filename gains a `_subs`/`_all` tag — without it, exporting two scopes of the same dept+range silently overwrote the first file.
+- **Deliberate divergence from the on-screen table: NO group-header pseudo-rows in the CSV.** A human reads a table top-to-bottom so banners work there; a spreadsheet reader wants a Department COLUMN to pivot and filter on, and banner rows break both. Written into `docs/client-ui-conventions.md` specifically so the next person doesn't "fix" the inconsistency.
+- **Phase 3 Missed: scoped ONLY for single-dept scopes** (`subs` with one child runs on that child). **Deliberately NOT merged for `all`** — the queue-only abandoned section already covers a parent's sub-queue queues (`queuesForDept_` rolls them up), so summing a child's report in would double-count every queue abandon AND every abandoned-ring bucket in the hour-of-day chart. Same trap as the QCD snapshot in Phase 1, same root cause. `subqMissedScopeNote_` states what is/isn't included in one line under the title — that sentence is the difference between a defensible partial and a confusing one.
+- **Phase 3 Escalations: NO CODE CHANGE, and that's the finding.** `getEscalations` already scopes by `user.departments`, so Phase 0's widening gave a parent manager their sub-queue's escalations automatically and `metaDept` already reports the joined list. Verified rather than inventing work to fill the phase.
+- **⚠ HONEST GAP: no new unit tests.** Both changes are pure client rendering in `script.html`, which the zero-dep `.gs` harness structurally cannot load; the UI harness could reach them but has no CSV-download or sub-queue fixture, and building one is bigger than either change. So they're covered at boot level only (no console errors, no overflow) plus manual walks. **If either regresses, a person notices, not CI.** The tractable fix is a UI-harness fixture with a parent/child payload — it would cover the scope bar, grouped table, subtotal rows AND the missed note in one go, and is worth doing before the next sub-queue phase because every phase adds more untested client surface.
+- **Also noticed: no regression scenario covers CSV export at all** — not just the sub-queue case. S6 covers the Source column/totals on screen but nothing exercises a download. Promoting one is cheap and overdue, but it's blocked behind the S41/S42 numbering collision.
+- **NET SCORE 0 − 0 = 0** — both items were created by Phase 1 and closed here, which nets to zero rather than counting as fixes.
+- **Where I left off:** committed + pushed, **NOT deployed**. **Phase 0's blocking pre-deploy action still stands** (confirm the four seeded parent pairings should confer access at all). New non-blocking action: **export a combined CSV for Sales and eyeball it** — it's the one change with zero automated coverage. Then walk **S4** in all three scopes (confirm the scope note matches what the section shows), **S6**, **S40**, and Phase 1's **S35**. **Remaining sub-queue work:** the **Insights combined view** is the last substantial piece (own phase, `insights:v19→v20`, needs per-dept team rollups threaded through KPI tiles + share donut + per-agent cards + trend chart). The missed section's `all` scope is a documented partial, not a finished state. Still open: the UI-harness sub-queue fixture (above); `meta.subQueueAgentHint` referenced in a dead branch and never populated; the S41/S42 collision (now blocking TWO scenario promotions); `Field Ops Power` not in the parent map — owner to confirm. **And still true: NOTHING in increments 53–62 is deployed**, the 12 Dept Config `Final Dept Labels` rows aren't entered, and the QCD parity gate should be re-run if `QCD_READ_SOURCE=neon` was ever set on a default-range pass.
+
+### Prior session (/broad-implement Phase 2 — sub-queue groups in the IR + Insights pickers)
+Branch `claude/sync-commands-dnxgcv`, **546/546 unit tests** (+6), INV-16 + cache-version-sync + claude-md-split green, UI gate **24/24 + 16/16**. **No cache version changed** (a consequence of the separate-helper decision below, not an oversight). Deploy: **Department Dashboard** (Util.gs, IndividualReport.gs, script.html, styles.html). Increment 61.
+- **⚠ SCOPE HONESTY — Insights' report BODY did NOT get the Phase 1 combined view.** What shipped is the PICKER side of both reports plus the correctness rule it requires. The reason is a design finding, not time: a combined agent-level Insights run needs per-dept team ROLLUPS, and Insights' team comparison is threaded through the KPI tiles, the share donut, the per-agent cards AND the trend chart. Bolting a second dept into one run would compare agents against the wrong team average — exactly the failure the owner's per-dept-subtotals decision exists to prevent. So the right move was the one-dept-per-run rule, not a partial combine. Doing it properly is comparable in size to Phase 1 and deserves its own phase.
+- **What shipped:** both pickers gain one collapsed group per sub-queue, from a new `subQueueGroups` field on `getIndividualReportInit`. **Insights delegates to that same init, so it inherited the field with zero changes** — which also means the two pickers cannot drift.
+- **Key design call: `computeSubQueuePickerGroups_` is a SEPARATE Util.gs helper, not a new mode on `computeActiveAgentsInRange_`.** That function's `{agents, floaters}` shape is pinned by `individual_active:v2`, is consumed by both pickers, and contains the INV-53 floater gate — leaving it untouched meant **no cache bump and no risk to that gate**. Each child is computed with THAT child's roster, so a sub-queue's active set inside the parent's picker is identical to what its own report shows. Per-child best-effort: a failure omits the group and logs, because a picker that fails to open is worse than one missing a group. **Verified by breaking the try/catch.**
+- **The correctness rule that makes the groups safe: ONE report run is ONE department.** `subqPickerScope_` reads the checked boxes — a selection confined to one sub-queue group runs against THAT dept; a selection SPANNING depts is refused with a reason. The team average/rollup is per-dept (INV-25/27), so a mixed run would silently compare agents against the wrong team. The group carries an inline note naming which team average will be used, so the behavior is visible before the click rather than surprising after.
+- **The sub-queue group is deliberately NOT muted.** Inactive and floater groups are de-emphasised because you rarely want them; a sub-queue is a department and a first-class choice.
+- **INV-53 stayed untouched and that was the point** — a sub-queue agent is a roster member of their own dept, never a floater, and the two now render as distinct picker groups instead of being conflated.
+- **NET SCORE 0 − 0 = 0** — correct for a feature phase.
+- **Where I left off:** committed + pushed, **NOT deployed**. **Phase 0's blocking pre-deploy action still stands** (confirm the four seeded parent pairings should confer access at all). After deploy, walk **S13** (picker grouping — the sub-queue group appears for Sales/CSR/Power, is not muted, and a cross-dept selection is refused) plus S11/S37, and Phase 1's **S35**. **Next candidates:** (a) **Insights combined view** — the named gap above, own phase, `insights:v19→v20`; (b) **Phase 3** (Missed `missed:v18` + Escalations); (c) the **Phase 1 CSV gap** (a combined-view CSV still has no Dept column, group headers or subtotals) which is the smallest of the three and the most visible to a manager who exports. I'd do the CSV first. Also still open: `meta.subQueueAgentHint` referenced in a dead branch and never populated; the S41/S42 numbering collision; `Field Ops Power` not in the parent map so a Field Ops manager won't see it — owner to confirm. **And still true: NOTHING in increments 53–61 is deployed**, the 12 Dept Config `Final Dept Labels` rows aren't entered, and the QCD parity gate should be re-run if `QCD_READ_SOURCE=neon` was ever set on a default-range pass.
+
+### Prior session (/broad-implement Phase 1 — the My Department sub-queue switcher)
+Branch `claude/sync-commands-dnxgcv`, **540/540 unit tests** (+5), INV-16 + cache-version-sync + claude-md-split green, UI gate **24/24 + 16/16** (dept page clean in both roles — no blank canvases, no horizontal overflow, which was the specific risk of adding a bar above the table). Deploy: **Department Dashboard** (Data.gs, script.html, dashboard.html, styles.html). Increment 60.
+- **What shipped:** a three-way segmented control on My Department for a parent dept — `<dept> only` / `<subs> only` / `<dept> + <subs>` — persisted per dept in `cdr.dept.subscope`, **defaulting to COMBINED** per the owner's decision. Depts with no sub-queues get no control and no behavior change (11 of 14). `subScope` is a cache-key dimension → `summary:v15→v16`.
+- **"Combined" means grouped, never merged.** Rows carry `dept`; each dept gets a `subq-group-head` subheader and its OWN subtotal row from the new `deptGroups`; the grand total is explicitly labelled. So the familiar own-dept number stays on screen and every figure reconciles against that dept's own view. Team averages and benchmark tints stay PER-DEPT — one average across two teams with different call profiles is a worse number, not a better one.
+- **The always-on relationship line is the highest-value piece and renders in EVERY scope**, including `own`, where it says the sub-queue is excluded. That exclusion was previously *completely invisible* to a parent manager. A CHILD dept gets an upward pointer only, no switcher (one level, matching the server).
+- **Key design call: `combineSummaries_` calls `computeSummary_` once PER DEPT and merges, rather than teaching that function to aggregate a list.** `computeSummary_` carries INV-02/04/05/23/53 + S35 + E5 and is the most pinned function in the app, so merging outside it leaves all of that untouched — and it buys the property the owner actually asked for: **a dept's subtotal in the combined view comes from the exact code path as its own view, so the two cannot disagree.** Cost is N DQE reads instead of 1 (2 for the real parents), once per 30-min TTL per (dept, range, scope).
+- **Two traps handled, both pinned with the reason in the assertion:** (1) duration means merge as an agent-count-WEIGHTED mean, never a mean of means, which would over-weight a one-agent sub-queue — a dept with no non-zero agents drops out of both sides, matching `avgNonzero_` (v11/F-29); **verified by breaking it**. (2) **`qcd` comes from the PRIMARY dept only** — `queuesForDept_` already rolls a parent's sub-queue queues into its own QCD snapshot (the v6 change), so merging QCD across depts would double-count every sub-queue call.
+- **INV-53 is the invariant most at risk from a careless merge**, and the reason the merge sums each dept's `totals` rather than re-deriving from `rows`: each dept's total already excluded its own floaters, so the grand total excludes them exactly once.
+- **The cache-version guard fired on its own** during this change and forced the `summary:v15→v16` sweep across OrphanFix.gs + 5 docs. Second time this cycle it has caught a real omission.
+- **Honest gap, listed rather than hidden: the CSV export does not reflect the combined view** — no Dept column, no group headers, no subtotals. Out of Phase 1's stated scope, so not silently added. Also: the missed section + team strip still show the primary dept only (Phase 3), and the switcher's note doesn't yet say what it does and doesn't scope.
+- **NET SCORE 0 − 0 = 0** — correct for a feature phase; no pre-existing bug fixed.
+- **Where I left off:** committed + pushed, **NOT deployed**. **Phase 0's blocking pre-deploy action still stands** (confirm the four seeded parent pairings should confer access at all). New non-blocking action: tell the Sales / CSR / Power managers their view now opens combined. **After deploy, walk S35** — verify a combined grand total equals the sum of its subtotals AND that each subtotal equals that dept's own view; that is the one scenario this change could break invisibly. **Next: Phase 2** (Insights + IR picker, `insights:v20`, `individual_active:v3`), then **Phase 3** (Missed `missed:v18` + Escalations). Alerts/Digests stay OUT by decision. Still open: the CSV gap above; `meta.subQueueAgentHint` is referenced in a dead branch and never populated (wire it as an agent count or remove); the S41/S42 numbering collision; `Field Ops Power` is not in the parent map so a Field Ops manager will not see it — owner to confirm. **Also still true: NOTHING in increments 53–60 is deployed**, the 12 Dept Config `Final Dept Labels` rows aren't entered, and the QCD parity gate should be re-run if `QCD_READ_SOURCE=neon` was ever set on a default-range pass.
+
+### Prior session (/broad-implement Phase 0 — sub-queue ACCESS widening)
+Branch `claude/sync-commands-dnxgcv` **restarted from `origin/main`** after PR #206 merged (40 commits landed; the branch carried only merged history, so a clean re-base was correct rather than stacking). **535/535 unit tests** (+15), INV-16 + cache-version-sync + claude-md-split green, UI gate 24/24 + 16/16. Deploy: **Department Dashboard** (Auth.gs, DeptConfig.gs). Increment 59.
+- **Context:** the owner asked for a way to view sub-queue detail separately / combined-with-transparency. I planned it in 4 phases and asked 4 design questions. Owner chose: parent-implies-child ACCESS, all three phases, **combined by DEFAULT** (against my recommendation — I flagged that it moves every existing Sales figure, they took it; their choice of per-dept subtotals + a labelled grand total substantially de-risks it, since the familiar parent number stays on screen), and per-dept subtotals rather than one merged total. Phase 0 is the security-bearing part, built and committed ALONE so it can be reviewed in isolation.
+- **What Phase 0 does:** `resolveUser_`'s manager branch returns `departments` = assigned ∪ **one-level** sub-queues (Overview parent map), plus a new `assignedDepartments` holding the raw Access Control assignment. `department` (landing dept) is unchanged. **Widening in ONE place is the whole design point** — `assertDeptAccess_`, `escAssertRowAccess_`, `getEscalations` scoping, `personalizeOverview_` and the client's `canPickDept_`/selector all already read `departments`, so they inherit it instead of me patching six gates and missing one.
+- **Guards (this is the first time the parent map affects AUTHORIZATION, not tile layout — INV-38 rewritten):** ONE LEVEL only (a transitive walk would let one bad cell cascade); FAIL CLOSED (any error reading the map returns the assigned list unchanged — auth must never widen *or break* on a config read); and read-side re-validation that drops self-parent edges, edges naming a non-existent dept, and any cyclic edge. **That read-side check is NOT redundant with `saveDeptConfig`'s** (which already had self-parent/unknown/cycle validation via `dcWouldCreateParentCycle_`) — the sheet is hand-editable, Neon is backfillable, and `OVERVIEW_PARENT_OF` is a code constant; none pass through the modal.
+- **⚠ The single most important operator fact: this confers access ON DEPLOY with NO admin edit.** The shipped constant already holds `PAP→Sales`, `PAP Q→Sales`, `Spanish→CSR`, `PAK→Power`, so every Sales manager gains PAP, every CSR manager Spanish, every Power manager PAK — agent-level data included. Pinned by a dedicated test so it can't surprise anyone later, and written up as **Operator State #39** with a BLOCKING pre-deploy check. Clearing an `Overview Parent` cell revokes access but also un-nests the Overview tile — one cell, two meanings, which is the inherent trade-off of reusing the existing map instead of adding a second one.
+- **Side effects that are intended but land early:** escalations scope widens for a parent manager (the Phase 3 end state), and `canPickDept_()` now returns true for them, so a dept selector appears where there was none and the role tag reads "manager · 2 depts". That means Phase 0 alone already lets a parent manager switch to their sub-queue, before any Phase 1–3 UI exists.
+- **Verified both guards by breaking them**: reverting `departments: effective` fails 5 tests; disabling the cycle filter fails the cycle test. Two of my own fixture bugs surfaced and were fixed properly rather than worked around — the REAL `OVERVIEW_PARENT_OF` constant seeds live edges that bled into tests naming PAP/Spanish/PAK (renamed to neutral depts + a dedicated seeded-constant test), and a `getOverviewParentMap_` stub leaked between tests (install() now restores it).
+- **NET SCORE 0 − 0 = 0** — correct for an enabling change; no bug is fixed here, and the pre-existing gap was a design decision rather than a defect.
+- **Where I left off:** committed + pushed, **NOT deployed**, and the pre-deploy pairing confirmation BLOCKS deploy. **Next: Phase 1** (My Department switcher — `Sales only · PAP only · Sales + PAP`, combined default, per-dept subtotals + labelled grand total, the always-on relationship line, `summary:v15→v16`), then Phase 2 (Insights + IR picker, `insights:v20`, `individual_active:v3`), then Phase 3 (Missed `missed:v18` + Escalations). Alerts and Digests stay OUT by decision. Open: the S41/S42 numbering collision (two never-promoted perceptual checks from increment 54 hold those names — promote them or start new scenarios at S43); `Field Ops Power` is not in the parent map and looks like a `Field Ops` sibling, so a Field Ops manager will NOT see it — owner to confirm; `user.assignedDepartments` is populated but unread until Phase 1 uses it for the relationship line. **Also still outstanding from the merged branch:** nothing is deployed at all (increments 53–58 included), the 12 Dept Config `Final Dept Labels` rows aren't entered, and the QCD parity gate should be re-run if `QCD_READ_SOURCE=neon` was ever set on a default-range pass.
+
+### Prior session (/broad-implement Batch 7 — F8, the CLAUDE.md split; LAST batch of the cycle)
+Branch `claude/sync-commands-dnxgcv`, **505/505 unit tests** (+5), INV-16 + cache-version-sync green. Docs + tests ONLY — no `apps-script/` file touched, **nothing to deploy**. Increment 58.
+- **CLAUDE.md 373,570 → 153,222 bytes (−59%)**, split into a working document + four indexed reference files: `docs/invariants.md` (the Invariant Library, 97 KB), `docs/operator-state.md` (the 38 numbered items, 51 KB), `docs/regression-scenarios.md` (S1…S40, 43 KB), `docs/client-ui-conventions.md` (14 client/presentation gotcha bullets, 55 KB). **Zero content lost** — verified line-by-line against `git show HEAD:CLAUDE.md`: 3 lines differ, all three the Read-first prose I deliberately rewrote. All four headings STAY in CLAUDE.md holding an index + pointer, so every `/cycle-*` / `/broad-*` instruction that reads "CLAUDE.md's Cycle Workflow Config → Invariant Library" still lands on a section by that name.
+- **The invariant index is 55 HAND-WRITTEN one-liners, not truncations** — a truncated INV-30 or INV-55 is worse than no index. Scenario titles + operator item numbers are verbatim. Every index header states the entry is authoritative and the summary is a finding aid.
+- **What deliberately did NOT move:** the six client traps that bite unrelated work (`safeChart_`, `dsConfirm_`, `csvSafeCell_`, the datalabels registration, the OKLCH/datalabels fillStyle rule, the `</script>`-in-scriptlet escape) stayed in Common Gotchas, and the index bullet says so in both directions; so did the Operator-State scope note + "start at the Health page" instruction (rules about HOW to use the checklist, needed unprompted); so did four mixed server+client bullets (WoW chips, missed-card tiers, threshold drift, heatmap) that describe payload fields as well as rendering. The 14-bullet cut is my judgement call, named as such: if a client rule turns out to be missed, copy that ONE rule back rather than unwinding the split.
+- **The split would have silently gutted the cache-version guard.** `cache-version-sync.test.js` had a hardcoded 4-file `DOC_FILES`, and INV-30 — the cache-version table, the densest source of `prefix:vN` claims in the repo — moved into a file that wasn't on it. Added all four. Kept the list EXPLICIT rather than globbing `docs/*.md`: I tested the glob and it fails on 10 legitimate historical references in `fix-history.md` + `insights-drilldown-spec.md`, which are archives. **This is the one item that would have fired — a bug this batch would have introduced, catching itself.**
+- **NEW `tests/unit/claude-md-split.test.js` guards the split's own new failure mode** (index↔file drift, silent in the worst direction: an invariant added only to the doc is invisible to anyone reading CLAUDE.md). Five checks: all four files linked AND linked from "Read first" specifically; invariant IDs+Subsystems match; scenario IDs+titles+Subsystems match exactly; operator numbers match and stay contiguous from 1 (they're cited BY NUMBER across the repo); and a **200 KB size cap on CLAUDE.md** whose failure message names the split pattern as the remedy rather than raising the number. **Every check was verified by breaking it first** — that surfaced a real bug in my `section()` helper (it cut a `##` section off at its first `###` sub-heading, so the Read-first check failed the moment I restructured that section).
+- **Swept the pointers the split made WRONG, not merely imprecise:** two docs claimed canonicality that had moved ("CLAUDE.md INV-30 is the canonical current-version list"), so a reader would land on a one-line summary and believe it was the full contract. Fixed in `architecture.md` (4 sites) + `conventions.md`; `fix-history.md`'s live-truth/archive division — its whole premise — now names the four split files as still-LIVE-TRUTH; README gains a paragraph explaining that "see CLAUDE.md INV-54" means index-there, entry-in-the-doc; `tests/README.md` repointed to the scenarios file.
+- **Honest cost:** ~25 KB of NET new bytes across the repo (indices + provenance headers) in exchange for 220 KB out of every session's context. 55 invariant summaries and 40 scenario titles now exist in two places — which is exactly what the new guard exists to police.
+- **⚠ `/setup-cycle` would undo this** — it rewrites `### Invariant Library` / `### Regression Scenarios` with full bodies. The ID checks would still pass (bodies would agree with the docs); the **size cap is the backstop**. Re-split rather than raising the cap.
+- **NET SCORE 0 − 0 = 0** — the correct score for a docs batch, deliberately not inflated. Under the three-way tally: one restructure + one new guard + one repaired guard. Value is future-tense: the file is readable in one sitting and cannot regrow to 372 KB without a test failing.
+- **Where I left off:** committed + pushed, nothing to deploy. **Common Gotchas is still the largest section (~87 KB / 50 bullets)** — CLAUDE.md is readable now but not small, and the remaining reduction is a DIFFERENT, higher-risk job: separating each bullet's rule from its version history means paraphrasing live rules, and a paraphrase that drops a caveat is how this repo gets bitten. Do that bullet-by-bullet with review, never in one pass; the four biggest (Inbound capture 13 KB, Neon write discipline 5.8 KB, role model 5.5 KB, Neon read-back 5.0 KB) are all genuinely load-bearing and mostly history. **ALL SEVEN SCAN BATCHES ARE NOW CLOSED** — what remains is entirely operator work, carried across four increments: from **57**, re-run the QCD parity gate if `QCD_READ_SOURCE=neon` was set on a default-range pass (that pass may have compared nothing), then the four flips in order each requiring `clean:true` AND `compared > 0`, and run `runInboundQcdParityCheck` for the still-OPEN Batch-5 investigation (the QCD-vs-inbound discrepancy is NOT resolved); from **56**, read the Health page's Install-readiness row and run `node scripts/check-remote-orphans.mjs .`; from **55**, drop `continue-on-error: true` from the `ui-harness` job once it's been green; from **53**, deploy both projects, re-run the Op-State-#38 histogram, decide UDC/UUC attribution, walk S41/S42. Follow-ons: `docs/known-issues.md` has no entry for either guard class hardened this cycle (Batch 6's false-clean compare gate, this batch's index drift); `docs/fix-history.md` has no `F8` entry for the split itself; `/broad-implement`'s §4 wording locates the invariant library in "Common Gotchas" where it never was (a `/sync-commands` fix, it's a template file).
+
+### Prior session (/broad-implement Batch 5 + Batch 6 — the two operator-gated batches; gate tooling only)
+Branch `claude/sync-commands-dnxgcv`, **500/500 unit tests** (+7), INV-16 + cache-version-sync green. UI gate NOT re-run (no client file changed). Deploy: **Department Dashboard** (QCDReport.gs, NeonRead.gs, InboundReport.gs — all editor-run diagnostics, so the push only matters for when you next RUN them). Increment 57.
+- **Read this first: both batches are operator-gated by construction and were only PARTIALLY implementable here.** Batch 5's core act is running `runInboundQcdParityCheck` against live Neon and judging the output; Batch 6's is running each parity gate and then setting a Script Property on a live deployment. I cannot execute Apps Script, reach Neon, or set Script Properties. **No flag was flipped** — flipping one by changing a code default would move production onto an unverified mirror without a parity-clean gate, which every runbook here forbids. **The QCD-vs-inbound discrepancy is NOT resolved and I am not claiming it is.** What I did instead: audited the tools both batches depend on and fixed what would have made the operator's runs wrong or inconclusive.
+- **Batch 6 — a LIVE false-pass on Batch 6's own critical path.** `compareQcdSources_` computed `clean = missingInNeon===0 && extraInNeon===0 && mismatches===0`, so with ZERO comparable rows all three are 0 and the gate printed `QCD PARITY CLEAN -- the gate PASSED`: the strongest possible green light for a `QCD_READ_SOURCE=neon` flip, on no evidence. `neonFetchQcdGrid_` returns a non-null EMPTY grid for an empty range so the existing `!neonGrid` guard never covered it, and **the in-source default range is a hardcoded week (2026-05-23..2026-05-29) that has aged ~2 months out of the data** — an operator who ran the gate without setting `QCD_PARITY_FROM/_TO` was the likely first victim. Now an empty comparison logs `QCD PARITY INCONCLUSIVE`, names the cause, says "Do NOT flip QCD_READ_SOURCE on this", and returns `clean:false`; the CLEAN line states how many rows backed the verdict.
+- **Verified the new test actually catches it** — removed the guard, confirmed `Batch 6: ZERO comparable rows is INCONCLUSIVE, never CLEAN` fails, restored it. Without that step the test would have been a tautology.
+- **Batch 6 — both read-source gates now return a structured verdict** (`{from,to,clean,compared,missingInNeon,extraInNeon,mismatches,roundingOnly,error}`) from every exit; they previously returned `undefined`, so nothing could read them programmatically. `compareDqeSources_` was **not** actually broken — its `extraInNeon` check catches sheet-empty because every Neon row reads as "extra" — but that protection was **incidental, not designed**, and would have become the same false CLEAN the moment the verdict stopped counting extras (exactly what the QCD gate did). Made the requirement explicit and said so in the comment. This extends the CORE-5/F-5 rule (a compare gate must never print a false PARITY CLEAN) from the three config gates to the two read-source gates, which is where it was missing.
+- **Batch 5 — `runInboundQcdParityCheck` was structurally blind to the population that mechanically produces the gap it exists to settle.** Its unattributed-queue scan filters `COALESCE(entry_queue,'') <> ''` — the same filter that hides an unrecognized queue from Dept Config's discovery panel (Op State #38) — so calls the capture never recognized had no row anywhere. New NO-entry_queue probe counts window calls with `COALESCE(entry_queue,'') = ''` grouped by `(disposition, abandon_stage)`, returned as `noEntryQueue`. Those calls count in the ADMIN company view but attribute to no dept. The log **deliberately warns that an `abandoned + ivr` count is NOT automatically a bug** (it unions genuine auto-attendant give-ups with unrecognized-queue misses), points at the Op-State-#38 journey histogram to split them, and notes F1b makes brand-prefixed queues attribute so a re-import inside the ~14-day window shrinks the bucket.
+- **NET SCORE 1 − 0 = 1.** The QCD false-clean is the one that counts YES on "would it fire this month": the gate is the documented precondition for the flip, Batch 6 was queued to run it, and on the shipped default range it would have returned a meaningless pass. The DQE guard and the inbound probe are the 2 defensive/structural items.
+- **Where I left off:** committed + pushed, NOT deployed. **⚠ Highest-value operator action: if `QCD_READ_SOURCE=neon` was already set on the strength of a default-range pass, RE-RUN the gate now** — that pass may have compared nothing (reversible with no redeploy). Then the flips in order, one per cycle, each requiring **`clean:true` AND `compared > 0`** (an `error` or `compared: 0` is a STOP, not a pass): 1. `QCD_READ_SOURCE` (set `QCD_PARITY_FROM/_TO` to a representative recent range first), 2. `CONFIG_SOURCE`, 3. `DQE_READ_SOURCE`, 4. `NEON_MIRROR_MODE=deferred`. **Batch 5 stays OPEN as an investigation** — run `runInboundQcdParityCheck` and read THREE things (per-dept `diff`/`diffWithHold` = the definitional gap; UNATTRIBUTED entry-queues → fix via Dept Config "Inbound queue aliases"; the NEW no-entry_queue bucket = attributable to no dept at all); expect one round trip. Only after the gap is quantified should the Inbound/Direct manager gates come off. **Still outstanding from increment 53:** deploy both projects; the Op-State-#38 histogram; UDC/UUC attribution; S41/S42. **From 56:** read the Health page's Install-readiness row; run `node scripts/check-remote-orphans.mjs .`. **From 55:** delete `continue-on-error: true` from the `ui-harness` job once it's been green. **Remaining: Batch 7** (F8 — CLAUDE.md split, now ~372 KB; every batch this cycle grew it, L ≈ 3d+). Follow-ons: a "flip readiness" function calling all five gates is now possible (all return structured verdicts) but deliberately NOT built (new scope); both gates' default parity ranges are still hardcoded fixed weeks (they now fail loudly instead of falsely passing — deriving them is a behavior change to a safety tool and warrants its own decision); `docs/known-issues.md` has no entry for the false-clean-gate class, now a genuine institutional-memory item.
+
+### Prior session (/broad-implement Batch 3 + Batch 4 — ops smalls + deployment hygiene)
+Branch `claude/sync-commands-dnxgcv`, **493/493 unit tests** (+3), INV-16 + cache-version-sync green, UI gate **24/24 + 16/16** (+1 F10 assertion). Deploy: **Department Dashboard** (Data.gs, CompanyOverview.gs, SystemHealth.gs, script.html). Increment 56.
+- **F9 (cost):** `getLatestDataDate` (MAX) and `getLatestDataDates` (MAX + the R12-26 `dqeEarliest` MIN) each ran their own whole-column `getValues()` on `DQE Historical Data`, so a COLD cache read a multi-year column TWICE per 5-min expiry. New `sheetScanDqeDateBounds_()` yields both from one read, memoized per execution (the `DEPT_CONFIG_ROWS_MEMO_` discipline). Deliberately NOT cached across requests — each caller keeps its own R8-C2 negative-cache semantics. **Test-side trap handled:** `install()` in dal-cutover + missed-report now reset `DQE_DATE_BOUNDS_MEMO_`, or a fixture swap would serve the previous test's bounds. New test proves ONE date-column read where there were two.
+- **F10 (real user-visible bug):** the escalations nav badge was APPEND-ONLY (`!tab.querySelector('.nav-count-badge')`) and fetched once at init, so a manager resolving their last escalation kept a stale non-zero badge for the whole session and the Overview strip never hid. New `escApplyBadge_()` updates in place and REMOVES at zero; `escLoad_` refreshes it, and since every mutation reloads the list the badge follows every change. **Chose a fresh `getEscalationsBadge()` over reusing the list's `meta.statusCounts`** — the list can be filtered to one dept (admin pick / view-as) while the badge is viewer-FULL-scope, so deriving it would undercount. Pinned in drive-smoke (badge never duplicates on reload).
+- **Batch 3.4 (real misreporting bug, the item I'd underestimated):** the Health page already covered every trigger + outcome + property + sheet, so "consolidate install state" was mostly built. The REAL gap: four engines gate their handler BODY on an `*_ENABLED` flag (`NEON_KEEPWARM`, `INGEST_WATCHDOG`, `PIPELINE_WATCH`, `QUEUE_REPORT`) and that was never reconciled against the trigger — **a trigger installed with the flag off fires on schedule, returns immediately, and the page said "installed"**. `svc()` now flags both mismatch directions ("installed but DISABLED — every run is a no-op" / "NO trigger but flag=true — it never runs") plus a single `trg-readiness` verdict row ("N armed, K need attention").
+- **F6 (tripwire, downgraded finding):** the Overview cache put now logs the blob size on every put, warns past 80 KB of the ~100 KB CacheService cap, and on FAILURE says explicitly that the Overview is now uncached so every request pays the full compute. Measured ~27 KB at 14 depts (~1.9 KB/dept) ⇒ cap is ~50+ depts away; this is instrumentation, not a live risk.
+- **Batch 4 (closes Operator State #29, open across cycles):** new `scripts/check-remote-orphans.mjs`, wired into `deploy.sh` BEFORE the push. clasp has no "list remote files", so it PULLS into a throwaway temp dir (`rootDir` forced to `.` so it can never touch the real project dir) and compares. **Key detail: clasp pull writes server files as `.js` even when they live locally as `.gs`**, so the comparison is on (basename-without-extension, kind) — without that every `.gs` would look orphaned. WARNS by default (an orphan is no reason to block an urgent fix); `STRICT_ORPHANS=1` is fatal; every unrunnable path (no/placeholder `.clasp.json`, pull failure, missing rootDir) skips with a reason and exit 0. **Verified against a SIMULATED clasp pull, which caught a real bug**: the temp dir's own `.clasp.json` was reported as an orphan (it lives outside rootDir locally but inside the pull dir) — now excluded.
+- **NET SCORE 2 − 0 = 2** (F10 + Batch 3.4 are live bugs; F9/F6/Batch 4 are the 3 defensive/structural items).
+- **Where I left off:** committed + pushed, NOT deployed. **Two NEW operator actions:** (1) after deploying, read the Health page's new "Install readiness (engines)" row — anything saying "installed but DISABLED" has been doing nothing on every run; (2) run `node scripts/check-remote-orphans.mjs .` with an authenticated clasp to finally settle Op State #29 (it will name PerformanceReport.gs / CompareRangesReport.gs if still live). The orphan check could NOT be exercised against the real projects here (no clasp auth in this environment) — logic is simulation-verified, the first real run is the operator's. **Still outstanding from increment 53:** deploy both projects; re-run the Op-State-#38 histogram; decide UDC/UUC attribution; walk S41/S42. **Remaining batches: 5** (QCD-vs-inbound discrepancy — still the blocker on releasing Inbound + Direct, M ≈ ½–1d), **6** (flag flips from `QCD_READ_SOURCE`, S ≈ 2h each), **7** (F8 CLAUDE.md split, now ~370 KB and grown by every batch since — L ≈ 3d+). Follow-ons: F6 only LOGS (a Health row would need a property written at put time); the badge isn't a live subscription across pages; `docs/known-issues.md` has no entry for the trigger-vs-flag mismatch class.
+
+### Prior session (/sync-docs + /broad-implement Batch 2 — F7, the rendered-UI CI gate)
+Branch `claude/sync-commands-dnxgcv`, **490/490 unit tests** (+2), INV-16 + cache-version-sync green, and a NEW second gate: `npm run ci:ui` → drive-smoke 22/22 + drive-f13 16/16. Docs + CI + audit tooling only — **no `apps-script/` behavior changed, nothing to deploy**. Increments 55 (+ the sync-docs pass).
+- **/sync-docs (applied).** One material find: `docs/known-issues.md` still documented the inbound capture as `/^A_Q_/i` — the exact claim F1b invalidated — which would have recreated the F1 trap for the next reader. Rewrote the two-queue-name-spaces section (brand-prefix class FIXED, spelling class still live), merged both recognizer-gap histories (Backup CSR/IMP-1 + UDC-UUC/F1b) into one healing note with the measured 38-abandon evidence, and pointed the diagnostic at Operator State #38 instead of the bare NULL-entry count. Added the **deliberate DQE-vs-inbound recognizer asymmetry** to IMP-8 *and* CLAUDE.md — widening the DQE regex gives phantom `A_Q_Main` sentinels (INV-23), re-anchoring the inbound one hides brand-prefixed queues (F1b); nothing said so, so a plausible "harmonize the two regexes" cleanup could have broken either side. `conventions.md` called QCD col D's names "raw" where CLAUDE.md calls them canonical — that overloading is how the confusion started. Checks 2+3 came back CLEAN: 76 listed subsystem paths = 76 on disk (both directions), and all 11 "undocumented" Script Properties are code-written outcome markers or compound-notation false positives — recorded as a scope note on the Operator State Checklist so the next audit doesn't re-flag them.
+- **Batch 2 / F7 SHIPPED — the client has an automated guard for the first time.** `npm run ci:ui` (→ `tools/ui-harness/ci.mjs`): gen payloads from the REAL server code → build admin + manager sites from the REAL client → two ASSERTING drivers. Kept SEPARATE from `npm run ci` on purpose — that suite is zero-dep by design and this needs playwright, so folding them would break that promise. New CI job `ui-harness` installs playwright + chromium and runs it.
+- **`drive-smoke.js` (NEW)** is the real prize: both roles × Overview/My-Department/Insights/Escalations, failing on page+console errors, unexpected unmocked RPCs, **BLANK chart canvases** (visible, laid-out canvas with entirely uniform pixels = the R12-1 class this harness was born for), and horizontal page overflow. 22 checks.
+- **Vendor bundles COMMITTED** (436 KB) + copied by `build-harness.js`, replacing three manual `cp` lines from the README — a real trap, since a fresh checkout built a site with NO `Chart` global, so every chart silently took `safeChart_`'s unavailable path and the harness reported nothing useful. New `tests/unit/ui-harness-vendor.test.js` pins the committed versions to `dashboard.html`'s CDN tags, so the harness can never quietly verify the client against a different Chart.js than production ships.
+- **Closed the fixture gap:** added the `qcd-alldept` payload, so the all-departments QCD report renders (9 expandable rows) instead of nothing — the documented reason F13's row fix could only be checked on the Insights proxy. `drive-f13.js` now walks BOTH `tr.qcd-expandable` surfaces, since they share `qcdToggleExpandRow_` but wire SEPARATE delegated keydown handlers; testing one proved half the fix. 13 → 16 checks.
+- **Verified the skip path** by hiding `node_modules/playwright`: prints an install hint, exits 0. Safe to run anywhere.
+- **⚠ The gate is ADVISORY until someone acts.** The `ui-harness` job carries `continue-on-error: true` so a flaky first-day render can't block a correct pipeline fix. **Delete that line once it's been green across a few PRs**, or the gate is decoration. Flagged in the workflow comment, CLAUDE.md, and the block.
+- **Honest note:** Batch 1's own Key-commands text ("the harness is NOT part of `npm run ci`") was made stale BY this batch and is corrected in the same commit. CLAUDE.md is now ~370 KB — Batches 1 and 2 both grew it, so **F8's priority should keep rising**.
+- **NET SCORE 0 − 0 = 0** (1 new capability + 2 defensive items under the three-way tally). Value is future-tense: this is what makes the NEXT client regression fail in CI rather than in front of a manager.
+- **Where I left off:** committed + pushed. **Gate coverage is boot-level** — it proves pages render, charts aren't blank, nothing overflows, keyboard paths work; it does NOT assert VALUES on screen, and it skips most MODALS (Alerts/Dept Config/Access/Health/Caller Lookup), whose init payloads `gen-phase3.js` already generates — that's the natural next layer. **Still outstanding from increment 53:** deploy both projects; re-run the Op-State-#38 histogram; decide UDC/UUC ATTRIBUTION; walk S41/S42. **Remaining batches:** **5** (QCD-vs-inbound discrepancy — still unexplained, still the blocker on releasing Inbound + Direct to managers, M ≈ ½–1d), **3** (F6/F9/F10 + "is this install armed?", M ≈ 1d), **4** (deploy.sh orphan-remote-file check, closes Op State #29, M ≈ ½d), **6** (flag flips from `QCD_READ_SOURCE`, S ≈ 2h each), **7** (F8 CLAUDE.md split, L ≈ 3d+).
+
+### Prior session (/broad-implement Batch 1 — Round-13 doc truth + harness tooling)
+Branch `claude/sync-commands-dnxgcv`, **488/488 tests**, INV-16 + cache-version-sync green. Docs + audit tooling ONLY — **no `apps-script/` file changed, so NOTHING to deploy for this batch**. Increment 54.
+- **1.1 Killed a LIVE doc error.** CLAUDE.md's Neon-write-discipline P-1 paragraph claimed the zero-record corner "can't be cleared -- an empty payload carries no date to delete". Both halves were false: F2 clears it, and the stated REASON had been stale since P-1 gave every caller `expectedDateIso`. The wrong reason was the more dangerous half — it would have deterred the fix.
+- **1.2 Documented increment 53** on the live-rule surfaces: inbound-capture bullet (a new "queue-name recognition is config-fed AND brand-prefix aware -- do NOT re-hardcode it" block with the measured UDC/UUC evidence and why the `Backup CSR` arm must stay EXACT); **Operator State #38 (NEW)** — the F1 diagnostic runbook, leading with the ANTI-pattern (do NOT probe `entry_queue IS NULL AND disposition='abandoned'`, it unions three causes) and giving the discriminating journey leg-name histogram + "read it against `DQE_EXCLUDED_AGENTS`, which already classifies every queue vs pseudo-agent name in this install"; Operator State #22 (F12 step order + no-skip, with the two don'ts); INV-54 (Dept Config now has a THIRD cross-project consumer — capture-time recognition, so listing a queue changes what the next import RECOGNIZES, not just how it attributes); INV-55 (overdue = calendar days both sides, the two-runtime mirror obligation, the accepted midnight residual); Key commands (the UI harness exists, is NOT in CI, and has caught render bugs the .gs harness structurally cannot). `docs/fix-history.md` gained the Round-13 section + a **RETRACTED/CORRECTED table** preserving the four wrong claims from the scan and why, and the taxonomy now warns that Round-13 `F#` is a **THIRD** `F`-shaped family.
+- **1.3 Promoted S39 + S40** into Regression Scenarios. S39 (keyboard walk) names `drive-f13.js` as its automated counterpart and records why table rows carry `tabindex` but no `role="button"`; S40 specifies the 68–76h window where a 72-hour and a calendar-day test disagree, and warns the counts are viewer-scoped + status-independent.
+- **1.4 Fixed the harness Chromium path properly.** The documented default `/opt/pw-browsers/chromium` is a DIRECTORY, not the binary — every driver failed until `CHROMIUM_PATH` was passed by hand (it cost a failed run last increment). Hardcoding today's path would re-stale because it carries the Playwright browser REVISION, so new `tools/ui-harness/chromium-path.js` globs the revision, prefers the full browser over `headless_shell`, and returns null so Playwright's own registry still works; all four drivers call `launchOptions()`. README corrected + `drive-f13.js` added to the run list + the first-run-chrome suppression (`cdr.tour.done`) documented, since without it a new driver's clicks time out on the tour overlay. **Verified with `CHROMIUM_PATH` UNSET: resolves and reports 13/13.**
+- **Honest cost:** CLAUDE.md went 357 KB → 369 KB (+12 KB) and its size IS finding F8, so this batch made F8 worse in absolute terms and should RAISE its priority. The added content is live-rule/runbook material (narrative went to fix-history.md, +5 KB), and Operator State #38 is the most operationally valuable artifact of the cycle — but the tension is real, not explained away.
+- **NET SCORE 0 − 0 = 0**, which is the correct score for a docs batch and deliberately not inflated; under /reflect's three-way tally these are 5 defensive/structural items.
+- **Where I left off:** committed + pushed. **Still outstanding from increment 53 (NOT done):** deploy both projects; re-run the Op-State-#38 histogram to confirm no queue-shaped name remains in the `abandon_stage='ivr'` slice; decide UDC/UUC ATTRIBUTION (they will surface as unattributed in Dept Config's discovery panel — recognition ≠ attribution, and neither brand has a dashboard dept); walk S41/S42. **Remaining scan batches, in priority order: Batch 2** (F7 — wire the UI harness into CI + add the missing `qcdAll` fixture payload, M ≈ 1.5–2d), **Batch 5** (the QCD-vs-inbound discrepancy — still unexplained now that F1 is exonerated, and the stated blocker on releasing Inbound + Direct to managers, M ≈ ½–1d), **Batch 3** (F6 payload-size logging / F9 double column scan / F10 stale esc badge / the "is this install armed?" consolidation, M ≈ 1d), **Batch 4** (deploy.sh orphan-remote-file check, closes Operator State #29, M ≈ ½d), **Batch 6** (flag flips, S ≈ 2h each starting with `QCD_READ_SOURCE`), **Batch 7** (F8 CLAUDE.md split, L ≈ 3d+). Also NOT swept this batch: `docs/known-issues.md` / `architecture.md` / `conventions.md` may restate the three rules I corrected in CLAUDE.md — a `/sync-docs` pass should check.
+
+### Prior session (/broad-scan Round 13 + /broad-implement F1, F2, F3, F12, F13)
+Branch `claude/sync-commands-dnxgcv`, **486/486 tests** (+13), INV-16 + cache-version-sync green, script.html parses, and the UI harness's new `drive-f13.js` reports **13/13** keyboard checks in real Chromium. Deploy: **CDR Import AND Department Dashboard** (both touched). Increment 53.
+- **F1 (High, capture bug — recurrence of IMP-1):** `icIsQueueName_` recognized queues by a HARDCODED `/^A_Q_/` + `backup csr` literal, so the next queue named outside it would repeat IMP-1's silent, permanent mis-capture (`entry_queue=NULL` -> attributable to NO dept -> invisible in every dept's Inbound report/heatmap). Worse, BOTH diagnostics are structurally blind to it: `scanInboundQueueNames_` (the Dept Config "Discovered inbound queues" panel) and the QCD-parity unattributed list filter `COALESCE(entry_queue,'') <> ''`, so an unrecognized queue has no row to discover. Recognition is now ALSO fed from the `Dept Config` sheet (QCD Queues col 2 + Inbound Queue Aliases col 10, incl. the RAW side of `raw=canonical` pairs) via `icLoadConfiguredQueueNames_`, loaded once per write run by BOTH writers before the builder. Strictly ADDITIVE (the regex still matches alone) and `buildInboundCallRecords_` stays PURE — `IC_KNOWN_QUEUE_NAMES_` is a module global, null = pre-F1 behavior. Digit-only tokens rejected (extensions, not queue names); inactive rows contribute nothing. Refactored the Dept Config read into one shared `icDeptConfigActiveRows_` memo serving both consumers + a single `icResetConfigMemos_()` reset (the two-memo split was a footgun: the existing R8-N test reset only one and would have read stale rows).
+- **F2 (Medium):** both no-sheet-primary writers returned BEFORE the authoritative per-date DELETE when the record set was empty, so a date whose LEGITIMATE count is zero could never shed phantom rows from an earlier import (nothing else corrects `inbound_calls`/`outbound_calls`). New `icDeleteDateOnly_` runs the delete-only path, gated on `authoritative && expectedDateIso && rawRows.length` — the non-empty-source gate is the safety: an empty/unreadable grid keeps the old early-return, since that is the one case where deleting would destroy good data. Reports `unreachable` so a deferred-mirror date stays queued instead of being marked done with phantoms intact (both backfill loops widened to honor it). CLAUDE.md's stated rationale ("an empty payload carries no date to delete") was STALE since P-1 and needs a doc sweep.
+- **F12 (Medium, data durability):** `neonMirrorDate_`'s `step()` RETHREW on a hard error, so a failure in an early step meant the later steps were never attempted — across all 8 retries — and then the gave-up path dropped the date. Inbound/Outbound were LAST, so a CDR-side poison pill permanently cost the two types that cannot be re-derived past the ~14-day Call_Legs retention, while the CDR/QCD/DQE step that caused it stayed re-derivable forever. Errors are now COLLECTED and thrown once after every step runs (caller's attempt-counting + retry cap unchanged), and the order is by RECOVERABILITY: Inbound, Outbound, CDR, QCD, DQE.
+- **F3 (Low-Medium):** the escalation overdue threshold meant CALENDAR days on the client (`escDaysOpen_`) and 72 HOURS on the server (`occurred_at < now() - interval '3 days'`, in BOTH `getEscalations` and `getEscalationsBadge`), so the "Overdue >3d" band tile / nav badge could disagree with the ⚑ cards they were counting — and the server comment claimed they matched. One `ESC_OVERDUE_DAYS` + `ESC_OVERDUE_SQL_` (`CURRENT_DATE - occurred_at::date >= N`) now drives both queries; the client copy carries a sync note (two runtimes, the INV-06 mirror pattern). Residual, documented: CURRENT_DATE is the DB's date vs the browser's, so they can differ for a few hours around midnight — bounded, versus the old always-on 1-day skew.
+- **F13 (Medium, a11y):** five click-only surfaces made keyboard-operable via shared `keyActivate_` / `makeActivatable_` + a shared `qcdToggleExpandRow_`: Overview dept tile (solo/compare — the LANDING page), My Department agent row (IR drill), `tr.qcd-expandable` on Insights Queue health AND the all-dept QCD report (the per-source breakdown has no other route), and the QCD carousel dots. Table rows get tabindex + a delegated keydown but NOT `role="button"` (that would override the implicit row role and break table semantics); div/span targets get the full role+tabindex treatment. Focus rings added in styles.html (a focusable element with no visible ring is still unusable). `aria-expanded` now tracked on the expandable rows.
+- **Stage-2 corrections worth keeping:** F6 (Overview cache-size risk) was MEASURED and downgraded — the real cached blob is 27 KB at 14 depts (26% of the ~100 KB cap), ~1.9 KB/dept, so ~50+ depts to cross it; my Stage-1 estimate was ~2x off. A suspected PHI leak in the R11-N transfer enrichment was RETRACTED (the leg is pre-filtered by `icIsQueueName_`). A claim that the Overview sub-queue chip was mouse-only was WRONG — it is already a real `<button aria-expanded>`; the fix I had started would have DOUBLE-fired on Enter and was reverted.
+- **New audit tooling (not wired to CI):** `tools/ui-harness/drive-f13.js` — keyboard-only walk of all five F13 surfaces, asserting focusability, activation, focus outline, no-scroll-on-Space, and aria-expanded round-trip. Run: `cd tools/ui-harness && node gen-payloads.js && node build-harness.js admin && CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome node drive-f13.js`. NOTE the README's Chromium path is stale (`/opt/pw-browsers/chromium` -> `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`), and `gen-payloads.js` dumps NO qcdAll payload, so the all-dept QCD modal can't be exercised there (F13's row fix is verified on the Insights Queue-health table, which shares the exact same markup + helper).
+- **Where I left off:** all five findings implemented, full CI + the browser walk green, committed? not yet — about to. NOT deployed. Follow-ons NOT done (out of scope): F7 (wire the UI harness into CI), F8 (CLAUDE.md 357KB split), F10 (esc badge is load-time-only and add-only), F6 (log the Overview payload size), the stale CLAUDE.md F2 rationale + the harness README's Chromium path, and the F1 exposure question, still OPEN. My first probe was WRONG: `entry_queue IS NULL AND disposition='abandoned'` came back 9353, but that count does NOT indicate F1 — it unions three causes and only one is F1 (stage='direct' = a DID call, no queue, legitimate; stage='ivr' with a genuine auto-attendant give-up, legitimate and already ~25% of calls per R5's note; stage='ivr' where the call DID enter an unrecognized queue = the F1 victim, which lands in 'ivr' precisely because a queue leg carries no Departments value). stage='queue' implies entry_queue non-NULL, so all 9353 are direct-or-ivr. The DISCRIMINATOR is the journey leg-name histogram over the stage='ivr' subset (the journey keeps RAW leg names even when entry_queue is NULL) — any real queue name there is an F1 victim; remedy is a Dept Config "Inbound queue aliases" entry, no code. Rows predating the journey extension have journey=NULL and can't be diagnosed this way. Awaiting the owner's histogram output.
+
+### Prior session (R11 … + R11-L trend viz + R11-M Wave-1 feedback — testing passes, owner-approved)
+Branch `claude/broad-scan-ak8g04`, **447/447 tests**, INV-16 + cache-version-sync green, script.html parses. Deploy: Department Dashboard ONLY. NOTE: Tiers A–C merged via PR #197; R11-L merged via PR #198; R11-M is NEW work on top, not yet PR'd.
+- **R11-M Wave 2 SHIPPED (server work: Direct delta chips + Inbound email; owner-approved):** M7 = Direct report delta/trend chips — `getDirectCallReport` computes a prior window in the SAME json query (`kpisPrior` scope-level + `deptsPrior` per-dept, INV-28 window); `directCall:v1→v2` (docs + tables synced). Client: `inboundDelta_` chips on IB Answered/IB Answer Rate/OB Calls KPI cards + company-view dept header rows (answered/OB pos, missed neg, answer% pos-pctPoints) + a 92%-tone rail on dept cards. Test +1 (direct-call-report.test.js kpisPrior/deptsPrior). M8 = Inbound email — `sendInboundReportEmail` (InboundReport.gs, admin-gated via inboundResolveRequest_, styled HTML: KPI table w/ prior deltas + By-insurer/By-line top-10, 5%-tinted; caller-recipient; charts stay in web app) + "Email me this report" button beside the Inbound CSV. 448/448 (+1), cache-version-sync + INV-16 clean, script.html + DirectCallReport.gs + InboundReport.gs parse. Docs: Direct/Inbound bullets, INV-30 (directCall:v2), INV-31 (send_mail), fix-history R11-M7/M8, known-issues/conventions version tables. Valence decisions baked: OB up=good (more outbound activity). **Where I left off:** committed/pushed? about to. NOT deployed. Wave 2 DONE — the whole R11-M feedback batch (Waves 1+2) is complete.
+- **R11-M Wave 1 SHIPPED (7-item owner feedback batch, client-only + 1 Config registry entry, NO cache bump):** M1 = per-agent Trend chart metric-aware gaps (BUG from R11-H1's spanGaps:true+tension0.4 on a gappy series — now count metrics 0-fill/drop-to-0, % breaks the line via spanGaps:false, monotone+tension0 for crisp no-overshoot). M2 = Simple view Agents shows the per-agent Trend chart, not cards (chartView forced true + mode forced 'trend' in Simple; #ins-cards-chart-wrap dropped from the ds-density-simple hide list; note/caption reworded). M3 = animate the solo/pin chart zoom (chartSpotlightApplyPins_ uses animated update(); release via chartSpotlightClear_(chart,true); hover-preview stays instant 'none'). M4 = red abandoned-volume line on the Inbound insurer Volume chart (data already in the daily drill; legend shown in Volume view). M5 = "Show report summary banners" Settings toggle (cdr.headlines → body.headlines-off → CSS hides .report-headline; hide-entirely per owner) + report-headlines UI_FLAG (admin-global). M6 = Missed drilldown open no longer flashes (deptMissedResizeDuringTransition_ rAF-resizes every frame for the ~420ms column transition, both open+close, no rebuild). 447/447, INV-16 + cache-version-sync clean, script.html + Config.gs parse. Docs: Insights + density + anti-intimidation + prefs bullets, Op State #34 (report-headlines UI flag), fix-history R11-M1..6. **Where I left off:** committed/pushed? about to. NOT deployed. **Wave 2 STILL OPEN (server work, owner-queued):** #4b Inbound report EMAIL export (new `sendInboundReportEmail` + styled HTML), #6 Direct report delta/trend chips on IB Answered/IB Answer Rate/OB Calls + per-dept header-row metrics (needs a NEW prior-window compute in getDirectCallReport + `directCall:v1→v2` cache bump).
+- **R11-L SHIPPED (trend-viz + holiday axis; owner-approved, client + 1 server axis change, NO cache bump):** L1 = holiday-aware chart axes — `trendIsoLabels` + `ovWeekdayIsoLabels_` drop weekday `COMPANY_HOLIDAYS` via `isCompanyHoliday_` (like weekends), killing false weekday-holiday dips; unset property = pre-change = no cache bump (S5 precedent). L2 = `irTrendArrow_` replaces the auto-scaled sparkline on the Overview dept-GRID tiles (`ovBuildGridTile_`): angle = real least-squares slope of the 30-day %-answered series on a FIXED 70-100% band (grown for outliers, cap ±60°), red-amber-green gradient on slope (amber=flat, sat ±30°; `--bad` resolved via canvas since not in THEME), nulls skipped. Sub-queue chips already had a collapsed WoW arrow (untouched). L3 = honest-scaled sparklines on the surfaces that STAY (hero, company aggregate, expanded sub-queue): `irSparkline_(vals,color,{band:[70,100]})` uses the same grown fixed band + GAP-CONNECTS nulls (no more 0% crash on a no-data day); no `opts` = legacy auto-scale kept for count/duration KPI sparks (zero regression). New client helpers: `honestBand_`, `linRegSlope_`, `parseColorRgb_`, `arrowAnchorColors_`, `arrowGradientColor_`, `irTrendArrow_`. CSS: `.ir-trend-arrow` + `.ov-dept-tile-arrow`. 447/447, INV-16 + cache-version-sync clean, script.html + CompanyOverview.gs parse. Docs: Overview trend bullet + Op State #27 (CLAUDE.md), fix-history R11-L1/2/3. **Owner decisions baked in: fixed band 70-100% (a); no admin holiday UI — Script Property is fine (b); AND the owner's mid-turn add: honest-scale the remaining sparklines too.** **Operator: maintain `COMPANY_HOLIDAYS` for the axis smoothing (already the property that drives alerts/digests).** **Where I left off:** R11-L committed/pushed? NOT YET — about to commit + push, then (per the pattern) can PR. NOT deployed. Client helpers aren't unit-testable by the .gs harness (no client JS harness); the server axis change rides the already-tested `isCompanyHoliday_`.
+- **R11-K / Tier C COMPLETE (multi-dept managers + alias emails; AUTH-critical, server+client+editor+tests):** K1 = a manager may hold MULTIPLE Access Control rows (same email, diff dept) → `resolveUser_` unions them into `departments` (removed the F13 first-only cap), `department`=first, `allDepts` stays false. Gates generalized to `dept ∈ user.departments` (`assertDeptAccess_`, `escAssertRowAccess_`, latent admin-only inbound/direct/getCallJourney pins) — byte-equivalent for single-dept (1-elem list). `getEscalations` scopes multi-dept to `department IN (...)` (all-their-depts default via `escDeptWhere_` + `metaDept`; the aggregate uses the same predicate); `getEscalationsInit.departments`=their list; `personalizeOverview_` keeps drivers for all their depts; `Code.gs` ships `departments` when >1. Client `canPickDept_()` (=isAllDeptViewer_ || manager w/ departments>1) gates ONLY the switch surfaces (selector pop / getRequestedDept / ovViewerDept_); Overview routing/spotlight stay isAllDeptViewer_ (server rejects non-assigned regardless). Role tag shows "manager · N depts". Editor: `saveAccessControlRow` REPLACE-ALL (accepts `departments[]`; ALL exclusive), `getAccessControlInit` returns grouped `managers`, `#ac-dept` is a multi-select, table groups by manager w/ dept chips; esc dept control gets "All my departments". K2 = `EMAIL_ALIASES` Script Property (`alias@=canonical@` pairs, tolerant, memoized-on-raw, ≤5-hop) → `resolveUser_` canonicalizes BEFORE lookup so an alias inherits canonical role+depts; returned email is canonical. Multiple-managers-per-dept already worked. Tests: access-control-editor.test.js (+11: multi-dept union/dedup, alias→mgr/admin, parse tolerance, departments[] replace-all/shrink/ALL-exclusive/reject, grouped managers) + escalations-hardening.test.js (+1 multi-dept row gate). 447/447, INV-16 green, all files parse. Docs: role-model gotcha + Op State #36 + INV-01 + fix-history R11-K1/K2. **NO cache-version bump** (access: cache key unchanged; value format string→JSON self-heals via Array.isArray/JSON.parse guard within the 60s TTL). **Operator: set `EMAIL_ALIASES` (optional) for alias routing; to assign a multi-dept manager, add >1 Access Control row (or use the multi-select editor). No new scope/migration.** **Where I left off:** Tier C committed/pushed, NOT deployed. Tiers A+B already shipped this branch. All owner testing-batch items now addressed (request-access UI dropped per owner).
+- **R11-I + R11-J / Tier B COMPLETE (Insights top-area + floating admin remote, client-only, NO cache bump):** I1 = the Insights/Escalations TOP GAP root cause, finally nailed from the owner's element dimensions — the two pages are siblings AFTER `.container`, so when active the container collapses to just the app header and its `padding-bottom:48px` + header `margin-bottom:12px` (60px) become dead space above the sibling page. Fix at source: `body[data-page="insights"|"escalations"] .container { padding-bottom:0 }` (removed the E2/F1 page-side zeroing hacks). I2 = shortened the Insights sticky strip by moving the "Comparing against…" + "Showing: N agents" lines OUT of `.ir-results-header` into a non-sticky `.ins-subhead` block below the popover (same ids; `reportHeadline_` skips `.ins-subhead` so `#ins-headline` still anchors below it). **J = the small FLOATING admin A/B remote** (`#ins-ab-panel`, bottom-right above the Help FAB, collapsible): mirrors the 4 view controls (Agents Cards/Chart, Basis Gap/Abs/Trend, Trends Line/Calendar, Metric select) by FORWARDING clicks to the real segmented controls (no parallel state); `insSyncAbPanel_` reflects live state + calendar-eligibility back onto it from `insApplyCardsView_` + `insRenderTrendChart_`. Admin-gated (`data-admin-only`), inside `#insights-page` so it auto-hides elsewhere + in view-as, hidden ≤900px. 435/435, INV-16 green, script.html parses. **Tier B done.** Remaining: **Tier C** (multi-dept managers via Auth `resolveUser_` full `departments[]` + client dept selector for >1-dept managers + `assertDeptAccess_`/`escAssertRowAccess_` accept any assigned dept + Access Control multi-dept editor; alias-email canonicalization john.doe@=john@; confirm multiple-managers-per-dept already works — request-access UI DROPPED per owner) — awaiting go-ahead.
+- **R11-H / Tier A SHIPPED (client + one Escalations aggregate; owner's 10-item testing batch, Tier A = 4 items, all client-visible, NO cache bump):** H1 = Insights per-agent Trend chart restyled to MATCH the app's canonical trend charts (borderWidth 2.2 / tension 0.4 / spanGaps / no fill / pointRadius 0 + paper-card point borders) AND made the DEFAULT Agents view (`insCardsView='chart'` + `insCardsChartMode='trend'`, was a role-split cards/gap default). H2 = Escalations "Needs review" summary tile REMOVED (dup of the category list) + Resolved·7d → **Resolved·MTD** (server SQL `date_trunc('month', now())` → `n_resolved_mtd`; `meta.resolvedLast7`→`resolvedMTD`; client label/read); the category list already dropped the standalone Needs-review row. H3 = Escalations Sort → compact ↑/↓ arrow icon (`.esc-icon-btn`) in `.esc-sb-head` beside Refresh at every viewport (`escSyncSortToggle_` glyph-only + title); `#esc-sort` select hidden at all sizes as the state store; dead `.esc-sort-toggle/-arrow/-lbl` CSS swept. H4 = heatmap cell-drill lists (BOTH lenses — inbound abandons `heatCellDetailHtml_` + DQE missed rings `missedSliceListHtml_`) GROUP rows by date with a colored per-date header (MM-DD + weekday + count) + left rail, tone cycling accent/good/warn/muted by first-seen date order (shared `heatDrillGroupedList_`/`heatDrillDateHeader_`; date moved off rows into the header). 435/435, INV-16 green, script.html + Escalations.gs parse. **Where I left off:** committed/pushed, NOT deployed. Tier B (Insights sticky-strip height: move "Comparing against…"/"Showing:…" out of the sticky header + the top-gap live Inspect; a small FLOATING admin view-toggle control for live A/B — NOT in Help) + Tier C (multi-dept managers + alias-email canonicalization; request-access UI DROPPED) both awaiting the owner. Live smoke for Tier A: Insights Agents opens on per-agent trend lines styled like the team trend; Escalations sidebar has no Needs-review tile, shows Resolved·MTD, sort is an arrow beside refresh; heatmap cell drill (Inbound report + Insights, admin) groups the drill rows by colored date clusters.
+- Shipped: B1 QCD verdict tiles centered/smaller; B2 dept-banner tone = section pct only + mini left-beside-name; B3 QCD modal Export ▾ (blast separate); B4 email = no banner + single-date label (shared dateLabel builder in QCDReport.gs) + green/red share-of-total split bar (soft red <5%) + Arial styling; B5 collapsible Overview trend band (`cdr.ov.trendcollapsed`); B6 missed-bars width belt-and-braces (canvas 100% CSS + transitionend re-measure + <70%-of-wrap rebuild) + compact "8AM" ticks; B7 Bars/Radar admin-only (missedChartMode_ forces bars for managers); B8 chart-tips "?" popovers (CHART_HELP_/initChartHelp_, 4 toolbars); B9 Insights sticky strip = whole results header (period bar moved inside, ids unchanged); B10 modal top-padding → first-child margin so stuck theads hug the modal bar; B11 sortable Inbound/Direct tables (srtApply_, impact default (100−ans%)×calls; Direct impact on busy-excluded answerable).
+- **PHASE C cycle 1 SHIPPED (C0 probe + C1 + C2):** C1 = qcd.rangePrior (E5 prior window, same scan; buildBlock_ reused) + csrTransfer.prior → Avg answer / Transfer % delta chips (valence 'bad' = increase warns, 3s/1pt floors), summary:v15 (docs swept; the cache-version-sync test polices even in-prose CLAUDE.md mentions — historical references must avoid the prefix-qualified `summary:vN` form). C2 = `armDwellPrefetch_(page)` armed from setPage + re-armed on each recordPageWindow_ render; dept→Insights fires agent-free getInsightsReport({dept, dept-window, agents:[]}) once per reportSig_ per session, writing reportLastGoodWrite_('ins', sig) so entry SWR-paints; insights→dept uses prefetchDeptSummary_. Known miss: saved agent/compare prefs change the entry sig (prefetch then only warms the server's agent-free key).
+- **Diagnostic added (read-only, no pipeline change): `previewInternalTransferPaths(dateIso)`** in cdr-import/inboundCalls.js. The "abandoned A_Q_Spanish call" that the ↳ path drill can't resolve turned out (from the owner's Raw Data) to be an AGENT'S INTERNAL TRANSFER to the Spanish queue (Direction=Internal, caller=an extension, Parent Call ID=N/A) that went unanswered -- not an external caller abandoning; inbound_calls correctly excludes it, so the drill correctly reports "not captured", and the OWNER decided these abandons should STILL COUNT (so NO DQE change). The owner then asked to evaluate the fragile "cross-reference the abandon to the agent's concurrent inbound call" idea safely: this editor-run function replays that cross-ref against a Call_Legs_<iso> sheet and LOGS the would-be path + a unique/ambiguous/miss tally (writes nothing, deletable). Deploy: `cd apps-script/cdr-import && clasp push -f`, then run `previewInternalTransferPaths('2026-07-21')`. Awaiting the owner's read of its output before deciding whether the import-time capture fix is worth the risk. (Still pending: the R11-F1 Insights header-gap live Inspect + the optional client-only ↳ path miss-message reword.)
+- **R11-G SHIPPED (items 4/5a/5b, chart hover+zoom behavior, all client):** G4 auto-zoom-fit on solo -- `chartSpotlightFitAxis_` fits the y-axis to the PINNED series on every pin change (called from `chartSpotlightApplyPins_`), restores the build-time axis stashed in `chartSpotlightStash_` (`_origYAxis`) on un-solo; generic across Overview / Insights trend / per-agent trend / QCD; handles scalar + `{x,y}`, caps pct at 100; the Overview `chartSpotlightAfterHide_` (Alt-hide) also defers to the pin-fit. Overview Full/Fit toggle KEPT (fits ALL lines; composes via stash/restore -- owner said removal optional). G5a tooltip filter-to-pinned + G5b global on/off both via ONE shared `chartTooltipPinFilter_` set as the Chart.js default `filter` (composed into the Overview-baseline + QCD-threshold per-chart filters): pins active -> only pinned in the card; `CHART_TOOLTIPS_OFF_` (Settings "Show chart hover cards", `cdr.charts.tooltips`) -> filter returns false for all -> card off live on next hover (no per-instance update; point still highlights). 435/435, INV-16 green, parses.
+- **R11-F PARTIAL (5-item feedback batch; items 1-3 SHIPPED, 4-5 scoped-for-confirm):** F1 = Insights header gap — strengthened E2 (zeroed all top-spacing on the insights page); the ~80px gap is NOT reproducible from static markup/CSS (hidden form+loader, results header is first flow child) so it's best-effort pending a live Inspect of the gap element (asked owner). F2 = Queue Report EMAIL dept strip — health verdict as a colored LEFT EDGE (green/watch/red border-left) + distinct tinted bg (drops the HEALTHY/WATCH text) + abandoned COUNT in the mini-summary (web QV-2 shape); queue-report.test.js pins border-left + "N abandoned". F3 = Overview animations — trend-band collapse animates (max-height+opacity, not display:none; inner .ir-chart-wrap fixed height so canvas never zeroes) + My-Dept mini-table `.ov-tbl-fade` on range switch (both reduced-motion-aware). **DEFERRED for owner confirm: item 4 (auto-zoom-fit on solo — owner offered to clarify; needs per-chart y-axis fit-to-pinned, generalizing ovYAxis_) + item 5 (tooltip filter-to-pinned on solo, generalizable via a shared Chart.js tooltip `filter` reading `_spotlightPins`; + a tooltip on/off toggle needing a UI-placement decision, global vs per-chart).** 435/435, INV-16 green, parses.
+- **R11-E SHIPPED (6-item feedback batch; mostly client, 1 server field + cache bump):** E1 = Caller Lookup call cards grouped into collapsible per-day `<details>` (`clGroupByDayHtml_`, newest open; flat for single-day). E2 = Insights sticky-header gap tightened (best-guess CSS -- the attached screenshot wasn't visible to me; flagged to owner). E4 = Insights per-agent **Trend line chart** (third Cards-chart basis: Gap/Absolute/**Trend**; `insRenderCardsChartTrend_`, one line per agent over the 12-mo axis, Overview chartSpotlight pin/hover + point-drill to IR; server adds per-agent `trendMonthly`). E5 = Insights sticky-strip date range made a prominent pill (My-Dept treatment, scoped so IR untouched). E6 = **Share donut true shares** (server `meta.answeredDeptTotal` = whole-dept answered over ALL active roster agents accumulated before the selection gate; client folds unselected into a muted "Other agents" slice -- fixes the subset-inflated shares). insights:v18→v19 (docs swept: INV-30, architecture/conventions/known-issues tables, page-plan, prose). E3 (A_Q_Spanish "↳ path") = **diagnosis only, NO code:** the drill correctly reports "not-captured" -- the Spanish abandoned call's root id (the parent id DQE emits) isn't a `call_id` in `inbound_calls`; root cause is pipeline-side in `buildInboundCallRecords_` (a leg group with no Incoming-direction/external-or-anon caller is skipped, or the Spanish language-IVR branch forks under a different root than DQE) -- needs a live Raw-Data leg inspection, flagged to owner. 435/435, INV-16 green, parses.
+- **R11-C6 + R11-D SHIPPED (client-only, post-cycle-2 testing pass):** C6 = missed bar-click no longer flashes (detail-toggle transitionend calls `deptMissedResize_(false)` -- resize only, the R11-B6 tooNarrow rebuild guard was spuriously firing a full destroy+recreate mid-reflow; initial paint still passes true) + the R11-C4 "■ chart" scope button no longer clips a narrow card's right edge (`.agent-card-head` flex-wraps). D = Escalations sidebar redesign per a Claude design handoff (Option-a for the band overlap, A everywhere): D1 status → sidebar category list (`escRenderCatMenu_`, six real statuses, counts from `meta.statusCounts`/`pendingReviewCount` NOT the filtered in-memory rows -- the handoff's source was wrong, codebase won; "Open"/Rejected-fold rejected) + C1 band trimmed to health tiles (Overdue/Oldest/Resolved·7d); D2 refresh→↻ icon; D3 sort→↑/↓ toggle over `#esc-sort`; D4 dept name-text for single-dept managers / selector for admins (reuse `escInit_.isAdmin||allDepts`). Native `#esc-status`/`#esc-sort` selects kept as ≤900px fallback + state store. NB the handoff framed it as "the modal" + "turn the toolbar into a side menu" -- both stale: Escalations is a PAGE (#6) and the sidebar already existed (C2); reframed as restyling the existing sidebar. 435/435, INV-16 green, parses.
+- **PHASE C cycle 2 SHIPPED (C3 + C4 + C5, all client-only):** C3 = ONE `#ins-trend-metric` dropdown replaces the trend sub-tabs + per-queue metric select + the calendar's cell-metric segment (queue metrics as `queues:<m>` values; the ATT option removed at init for non-admins — `<option>` can't use data-admin-only; `insSyncTrendMetricSel_` self-heals a non-offered saved value to Answered); NEW Missed + Call volume (rung) line metrics from `trendDaily`; calendar cell metric DERIVED from the dropdown (ans/pct/missed/vol/abd; segment → `.ins-cal-metric-lbl` label; `insCalMetric` pref vestigial; ATT + count queue metrics stay line-only per `insCalendarEligible_`); the reported calendar day-click no-op fixed with belt-and-braces DIRECT wiring on `.ins-cal-drill`/`[data-cal-nav]` after each innerHTML render. C4 = `.agent-scope-btn` (■/✕ chart) on each missed card summary rebuckets the 18-slot chart from that agent's own timeline entries (`missedTimeBucketIdx_`/`deptMissedScopedChart_`, zero fetch); `#dept-missed-scope-chip` in the toolbar names the scope with ✕ clear; clicks intercepted in the initClipboardOnce document delegate (preventDefault so the `<details>` never toggles); bucket drill stays dept-wide; scope resets each fetch. C5 = Direct company view renders per-dept `<details>` cards (`directCallDeptGroups_` groups the same rows by `r.dept`; aggregate summary stats — busy-excluded answer % w/ 92% tint, answered-weighted IB ATT; card order = B11 impact on the aggregate) expanding into per-dept sortable agent tables (shared `directAgentRowHtml_`/`directImpact_`; `direct-dept-tbody-*` srtWired_ entries dropped + re-armed per render since innerHTML kills the theads); flat table stays for single-dept; CSV already had the Dept column.
+- **May 6–26 chart gap — REFRAMED (data layer exonerated):** owner's SQL shows dqe_history HAS the range; parity CLEAN scoped to exactly 2026-05-06..26; gap persists on the chart across days ⇒ the loss is inside the Overview chart pipeline's per-row filters (sentinel skip / roster name join INV-04 / rung accumulation). Shipped `probeOverviewChartDates()` (CompanyOverview.gs, editor-run, OV_PROBE_FROM/TO props default to the range) — owner runs it once; "roster-unmatched" with sample names ⇒ fix via Outlier Fix/aliases; rows-with-rung-0 ⇒ zeroed count columns in that era's rows. ALSO ask owner: does the My Department agent table populate for May 6–12? (Empty table = same roster-join cause.)
+- Where I left off: committed/pushed; not deployed. Live smoke (adds to the Phase-B list): Insights Trends — the single Metric dropdown (admin sees ATT + queue entries, manager doesn't see ATT), Missed/Call-volume lines, Calendar for Answered/%/Missed/Volume + Queue Abd% with working day-clicks + month nav; missed section — ■ chart button scopes the chart to one agent + the chip clears it, drill panel stays dept-wide; Direct report as admin All-departments — dept cards expand into sortable agent tables, single-dept still flat, CSV unchanged. Phase-B smoke list: QCD verdict band + banner tones, Export ▾ menus, email preview (no banner, split bars, single-date subject, no Courier), Overview collapse chevron, missed bars filling + 8AM ticks + no toggle for managers, chart ? tips, Insights pinned header w/ period row, Inbound/Direct stuck headers + column sorting. **May 6–26: still awaiting the owner's `probeOverviewChartDates()` log output** (expected: roster-unmatched sample names → Outlier Fix renames/aliases; the owner's "My Dept shows SOME data but low volume for May 5–26" supports partial roster-join failure on a variant-names era).
+
+### Prior session (R10 — second post-deploy testing pass, 8 owner notes)
+Branch `claude/broad-scan-ak8g04`, **433/433 tests** (2 added: R10-5 in overview-qcd-snapshot), INV-16 green, script.html parses. Deploy: Department Dashboard ONLY. All client-only except R10-5 (summary:v13→v14).
+- **R10-1:** quick-start chips → Help modal (`.help-quickstart`/`#help-launcher`; `initOverviewLauncher_` injects there only, chips close Help first); `#help-tour-btn` added; page-top launcher rows + `#ov-launcher` static block + `.ov-launcher--page` CSS removed; tour step folded into the Help step.
+- **R10-2:** `.dept-side` sticky top = `calc(var(--dept-sticky-h) + 10px)`; `syncDeptStickyOffset_` (ResizeObserver on `#dept-page .controls`) publishes the var.
+- **R10-3:** `initCountUp_` (debounced MO, `CU_SELECTORS_`, once-per-node so the observer refiring on its own text mutations can't re-target an intermediate value; skips durations/rich text; reduced-motion off) + `ds-bar-grow` scaleX keyframe on `.ans-track`/`.dts-track-fill`/`.qcd-hero-fill`/`.ins-cbar-fill`.
+- **R10-4:** `.ans-bar--pass` (red seg opacity .35) / `.ans-bar--fail` (bold value) on `answeredBarHtml_` (92%) + `qcdDailyBarCell_` (5%).
+- **R10-5:** `computeDeptQcdSnapshot_` range block gains answered-weighted `avgAnswerSec`/`avgAnswer` (displays grid + `parseHmsDisplay_`; Yesterday/MTD blocks null); new `computeCsrTransferRange_` (Data.gs; CSR-only, `CSR Transfer Historical Data` cols C/F/G via getDisplayValues + `rowDateIso_`, weighted transferred/total, null best-effort) → `csrTransfer` on the summary response (+ emptySummary_ mirror); team strip renders Avg answer (any dept with data) + Transfer % (CSR) tiles. summary:v14 — docs synced everywhere the cache-version-sync test pins (CLAUDE.md INV-30/INV-51, known-issues table, architecture, conventions, OrphanFix.gs comment, Data.gs F-29 comment).
+- **R10-6:** `.dash-header` margin-bottom 24→12 (+ launcher removal) kills the blank strip.
+- **R10-7:** missed bars: `.missed-chart-hwrap--bars` fixed 320px wrap + `maintainAspectRatio:false` (aspectRatio removed) + bars-mode section cap none; radar untouched.
+- **R10-8:** QCD all-dept verdict: callout retired (return band only), tile values 32px, hero 42px + 12px labeled bar (`.qcd-hero-tick-lbl` "5%") + min-width fill, `.qcd-deptrow-mini` 13px ink + `.qcd-mini-pct` bold row-toned.
+- **R10-9 (follow-up note, same round):** sticky table headers on the Inbound + Direct report tables — `#inbound-modal/#direct-call-modal .qcd-source-table th { position:sticky; top:0 }`, with the table's `overflow:hidden` → `clip` in those two modals only (hidden = a scroll container that traps sticky) + a box-shadow bottom line (collapsed borders don't travel with a stuck header).
+- **Where I left off:** R10-1..9 committed/pushed. Live smoke adds: Help modal chips + tour button, side-card clearance, count-up/bar animations (and reduced-motion off), pass/fail bar tints, CSR strip tiles (needs CSR Transfer sheet data in range), blank-strip gone, missed bars filling, QCD verdict layout, Inbound/Direct sticky headers on long tables.
+
+### Prior session (R9 — post-deploy owner testing notes, client-only)
+Branch `claude/broad-scan-ak8g04`, **431/431 tests**, INV-16 green, script.html parses. Deploy: Department Dashboard ONLY. Owner notes → fixes:
+- **R9-1:** retired the R7 B3 sticky BANNERS (`initStickyBar_`, `.page-sticky-bar`, both markup blocks) — the REAL controls are sticky now: `#dept-page .controls` + `#ins-period-bar` get `position:sticky; top:0; z-index:60` on an opaque `var(--paper)` strip (above `.dept-side`'s sticky card, below modal z 100). Scoped selectors — the Dept Config modal's `.controls` is unaffected.
+- **R9-2:** dept toolbar = horizontal `.control-btn-row` with "↻ Refresh" (btn-secondary, Insights parity) + an "Export ▾" `.ir-export-wrap` menu (single item: Download CSV → `exportTableCsv_`). The WRAP keeps id `#csv-export-btn` so the two hidden-until-data gating sites are untouched. Help topic reworded.
+- **R9-3:** retired the Batch-E date-sync offer chip (`maybeShowDateSyncChip_`/`applyDateSync_`/`dsyncFmtRange_`/`dateSyncDismissed_`, both `#*-date-sync` hosts, `.dsync-chip` CSS). Replacement: `adoptSharedWindow_(page)` in setPage — `pageActiveWindow_` entries now carry `at:Date.now()`; entering dept/insights adopts the OTHER page's window when it rendered more recently and differs (dept: feeds the existing setPage refresh branch via `adoptedWin_`; insights: `runInsReport()` unless `insAutoRunPending_`, whose queued auto-run reads the rewritten inputs). Hand-offs unaffected (Insights direction sets inputs AFTER setPage; dept direction carries the already-recorded window → input-match no-op). Tour step copy updated.
+- **R9-4:** Escalations blank first paint — `escEnsureInit_` shows `dsRingsHtml_` in `#esc-loading` at fetch start.
+- **R9-5:** view-as-manager on Escalations now pins the request dept to `viewAsDept_` + hides `#esc-dept-col`; `applyViewAs_` exit restores the column + reloads the page when active. (Real managers were always server-pinned in `getEscalations` — this was admin-preview parity only.)
+- **R9-6 (charts outage ROOT CAUSE, from the owner's console error):** `this._fn is not a function` in Chart.js core.animation — R7 B1/O-2 REPLACED `Chart.defaults.animation` with `{duration,easing}`; `Animations.configure` copies only `Object.keys(defaults.animation)` per animated-property group, so `type` vanished → colors group lost `type:'color'` → first animated color killed the SHARED animator → every chart frozen. Fix: mutate `anim.duration/easing` in place; reduced-motion = duration 0 (never `false` — same key-list hazard). Reproduced + proven headless (scratchpad chartrepro, chart.js@4.4.4 + datalabels@2.2.0, custom platform since BasicPlatform force-disables animation; crash on color-changing update in 'replace' mode, clean in 'mutate').
+- **R9-7 (Field Ops Power / Denials Overview gap ROOT CAUSE):** owner confirmed recent `Total Calls` rows for both queues (7/20: Denials 4/2/2, FieldOps_Power 21/21/0) — so the server snapshot was fine. The CLIENT dropped it: `ovBuildQcdCaption_` was appended from inside `ovBuildWowChip_`, whose `!dept.wow` early-return fires when `computeWowDelta_` returns null (zero DQE rung in either 7-day window) — queue-centric low-ring depts lost ALL QCD chips. Fix: hero + grid tile builders call `ovBuildQcdCaption_` independently. If chips STILL missing after deploy, next check: whether 'Denials'/'FieldOps' are real DO NOT EDIT! headers (tiles exist at all) — probe `google.script.run.withSuccessHandler(o=>console.table(o.depts.map(d=>({name:d.name,hasQcd:!!d.qcd})))).getCompanyOverview({})`.
+- **Where I left off:** committed/pushed, NOT deployed (dashboard clasp push + New version). Live smoke adds: sticky strips on scroll (no side-panel overlap), Export menu, window follows across dept⇄Insights both directions, Escalations loader + view-as pinning. Backlog unchanged: Neon flip runbook (owner will run), Inbound/Direct un-gating, legacy decommission, QV sparkline extension.
+
+### Prior session (/broad-implement QV — Daily Call Queue Report visual second pass + manual email)
+Branch `claude/broad-scan-ak8g04`, **431/431 tests** (2 added: QV-4/QV-5 in queue-report), INV-16 green, script.html parses. Deploy: Department Dashboard ONLY. Owner-approved decisions: Item 1 hybrid C (tick on the split bar at answered%+5, not an abandon-scaled bar), Item 4 binary tones (no amber band), Item 3 sparklines OMITTED (quoted S–M ~½ day as a later server extension: trailing 7-day company series — free-ish on the sheet path, needs a widened neon window, `qcdAll:v4→v5`), Email = options A **and** B.
+- **QV-1:** 5% tick on the all-dept bars — opt-in `qcdDailyBarCell_(r,{tick:true})` (Insights daily table untouched); hidden when answered>95% or zero volume.
+- **QV-2:** dept banners — binary rail/tint (warn = section abandon%≥5 or any queue violation; sage; muted-empty), 16px name, mini-summary from `qcdAllDeptSectionTotal_` (now computed per section unconditionally; subtotal row still >1-queue-only).
+- **QV-3:** company hero (0–10% bar, midpoint 5% tick, "N of M calls lost" — `grandTotals.abandoned` verified present). Verdict container is outside the print clone.
+- **Print contract:** `qcdAllDeptPrint_` clones `#qcd-alldept-body` — all decorations carry `qcd-screen-only` and the print path now strips them from a detached clone (byte-identical print). CSV builds from data — untouched.
+- **QV-4:** `sendQcdAllDeptEmail({from,to})` — signed-in gate (= getQcdAllDepartments), caller-only, displayed range (email builder verified range-safe: targetIso is only the dateLabel fallback). Button `qcd-alldept-email-btn` (all viewers).
+- **QV-5:** `sendQcdAllDeptToSubscribers({date})` — assertAdmin_, single-day (button disabled on ranges via qcdAllDeptRender_), reuses sendQueueReportForDate_ O-1 isolation; claims `QUEUE_REPORT_LAST_SENT` ONLY when date === current gate target && count>0; never writes LAST_RESULT. Button `qcd-alldept-blast-btn` (data-admin-only) + dsConfirm_.
+- **Where I left off:** committed/pushed (see git log). NOT deployed (dashboard clasp push + New version). Live smoke: S32 all-dept walk — ticks on bars/subtotals/company row, banner tones (esp. a violation dept), hero vs the old first tile, print WITHOUT ticks/mini-summaries, CSV unchanged, "Email me this report" on a range, blast disabled on ranges + confirm/claim flow on yesterday. Backlog otherwise: Batch F owner-gated (Neon flip next per owner; Inbound/Direct un-gating; legacy decommission) + optional QV sparkline extension.
+
+### Prior session (/broad-implement R8 Batch E + R8-N normalization + drilldown-phases verification)
+Branch `claude/broad-scan-ak8g04`, **429/429 tests** (6 added: 3 R8-N in inbound-calls, 1 in dept-config, 2 in config-editor-c3), INV-16 green, script.html + all edited standalone .js parse. Deploys: Department Dashboard + cdr-import (inboundCalls.js, NeonMirror.js) + cdr-report (sheetRepairs.js, inboundCallsExport.js, emailDailyReport.js).
+- **Batch E (ops tail + docs):** E1 NeonBackup trashes stale higher-numbered partN on a shrinking parts-month; E2 slot-repair PREVIEW restores formats per-group (abnormal exit can't persist the numeric lens); E3 `exportInboundCalls` per-date replace (fallback rows for Neon-lost dates survive; `ic_removeRowsInRange_` gained optional `onlyDates`); E4 `runBatch` per-day date-cell restore (ceiling kills skip finally) + malformed Neon Mirror Queue rows dropped with a log; E5 Op State #8 reworded (safety-net trigger uninstall = CORRECTNESS); E6 doc sweep (architecture migration-complete label + root-clasp layout + file list, conventions IR-last-floater, .claspignore comment, INV-16 guard doc both sanitizers, Op State #14 raw-name pointer, known-issues R8-1 cross-ref — the cache-version-sync test caught and forced a bare-version rewording in conventions).
+- **R8-N (capture-time queue normalization — the two-name-space root fix, option 1):** Dept Config "Inbound queue aliases" accepts **`raw=canonical` pairs** (plain raw names unchanged = attribution-only). cdr-import `icQueueCanonicalMap_` (memoized, best-effort, reads the target ss's Dept Config cross-project — the INV-46 pattern; strict-truthy Active) + `icNormalizeQueue_`; `writeInboundCallsToNeon` translates ONLY entryQueue/finalQueue on every capture path (daily/deferred/backfill); journey JSON + num_queues stay raw. Dashboard: `getInboundQueueAliases_` returns the RAW side of pairs (union unchanged = belt-and-suspenders for old rows + DQE sentinels); `saveDeptConfig` validates pairs (canonical side ∈ dept's QCD queues — row's own field or `queuesForDept_` fallback; malformed pairs rejected; digit check on raw sides). **SCHEMA DECISION MADE THIS SESSION** (the previously-parked owner question): the `raw=canonical` syntax, chosen as backward-compatible + explicit for multi-queue depts — flag to owner in summary. **OPERATOR: set pairs (CSR: `A_Q_CSR=A_Q_CustomerSuccess`), re-run `backfillInboundCalls` within Call_Legs retention; older rows via the union or one-off SQL (runbook in known-issues).**
+- **Insights drilldown Phases 2–4: VERIFIED ALREADY SHIPPED, no code needed.** The scope item came from a STALE CLAUDE.md claim ("endpoint is dormant") — spec + code confirm `insQhMissedDrill_` (P3), `heatCellToggleDrill_` dual lens (P4), bucket journey chips (P2). CLAUDE.md bullet corrected (R8-E6).
+- **Where I left off:** committed/pushed (see git log). NOT deployed. Remaining from the scan: Batch F owner-gated only — Inbound/Direct un-gating (vetting run; the R8-N pairs + R8-1 alias population are the same operator step), Neon flip EXECUTION (unblocked since Batch C), legacy dqe-report decommission. The R8 scan is otherwise FULLY DRAINED (A+B+C+D+E+N + findings 1–5).
+
+### Prior session (/broad-implement R8 Batches C+D → R8-C1..C4, R8-D1..D4)
+Branch `claude/broad-scan-ak8g04`, **423/423 tests** (13 added: 4 dal-cutover C1/C2, 1 insights-report C3, 2 dept-config C4, 4 in NEW cross-file-pins.test.js D1/D2, 2 individual-report D3), INV-16 green, script.html + DQEdrilldown parse. Deploys: Department Dashboard + cdr-report (DQEdrilldown.js). **The Neon-flip runbook's outage corners are now swept — the README flip runbook (Op State #19/#30) is safe to execute.**
+- **C1:** IR/Insights/Missed outage-empty shapes (Neon unreachable + no sheet, the F-35 corner) carry `meta.sourceUnavailable` and every cache-put site skips them (getMissedCallsReport + missedReportDataCached_ + IR + Insights); reachable-empty (LM2) stays cacheable. Latent until a sheet is trimmed.
+- **C2:** `getLatestDataDate` caches the `__none__` NEGATIVE only when no primary source failed (`cacheNegative_` guard; the F6 discipline) — a neon blip + trimmed sheet no longer pins "no data" under the :neon key.
+- **C3:** `insightsQueueHealth_`'s QCD-sheet pre-check gates on `getQcdReadSource_()` — neon-path installs keep Queue health when the QCD sheet is trimmed (F8 benign-hide preserved on the sheet path).
+- **C4:** `sheetReadDeptConfigRows_` distinguishes ERRORED (flag `DEPT_CONFIG_READ_FAILED_` via `deptConfigReadFailed_()`) from ABSENT (documented constants fallback, unflagged); the four QCD-embedding cache puts (summary Data.gs / companyOverview / insights / qcdAll — the 6h-TTL one) skip pinning a constant-only view after a transient read error.
+- **D1/D2:** NEW `tests/unit/cross-file-pins.test.js` (the cache-version-sync extract-canonical pattern): NeonMirror DQE/QCD read widths + merge-repair width vs Config.gs schema constants; UI_FLAG_SURFACES registry↔CSS↔markup parity (missing rule / stale target fails CI; a rule targeting a wrong-but-existing element still needs eyes — documented limit).
+- **D3:** IR prevPeriod resolves SERVER-side — client sends `priorMode:'prevPeriod'` (both call sites: runIrReport + the edit popover; keepCustom unaffected), `getIndividualReport` resolves via `computePriorWindow_`; explicit dates win; YoY/custom unchanged. INV-49 updated. Client resolver survives for the form hint only.
+- **D4:** DQEdrilldown `canonicalize_` mirrors the build's INV-24 strip+FLATTEN union (was strip-only — false "no matching rows" on flatten-matched agents).
+- **Where I left off:** committed/pushed (see git log). NOT deployed. Remaining from the scan ranking: Batch E (ops tail + doc sweep: NeonBackup stale parts, slot-repair preview formats, exportInboundCalls per-date delete, runBatch restore, immortal queue rows, Op State #8 rewording, doc drift G1-G7 + the two carried /sync-docs items), Batch F (owner-gated: Inbound/Direct un-gating, capture-time queue normalization, Neon flip EXECUTION — now unblocked by Batch C, drilldown phases, legacy decommission).
+
+### Prior session (/broad-implement R8 Batches A+B → R8-A1..A7, R8-B1..B6)
+Branch `claude/broad-scan-ak8g04`, **410/410 tests** (5 added: 3 R8-B6 in sheet-repairs-merge, 1 R8-A5 in config-editor-c3, 1 R8-A6 in pipeline-watch; +1 R8-B4 assertion in an existing c3 test), INV-16 green, script.html + all edited files parse. Deploys: Department Dashboard + cdr-import (autoImport.js) + cdr-report (dashboardCDR.js, neonbackfill.js, sheetRepairs.js).
+- **Batch A (live-surface quick wins):** A1 UI_FLAGS `dept-team-strip` CSS now hides the strip (not just the caption) + `insQhNoRingGate_` honors the `ins-queue-health` flag; A2 Direct mirror skip/error logs a `processIntegratedHistory:Direct:neon` FAILURE row (L7 pattern; NEON_HOST-unset installs stay silent — Direct has a sheet primary, unlike F9's inbound); A3 Caller Lookup `clLookupSeq_` stale-token + Enter respects the disabled button; A4 CRB render clear widened 40→`max(45, headers+1)` cols; A5 `computeThresholdDrift_` skips `duplicateRow` (OPS-9 first-row-wins); A6 `pipelineWatchRecord_` refuses watermark 0 (backlog-blast guard); A7 `insScrollPending_` disarmed on both Insights failure paths + Insights CSV Prior columns formatted (`priorCell`: durations short-formatted, pct as %).
+- **Batch B (data/tool correctness):** B1 `backfillQCDHistory` stores `abandoned_pct` as a FRACTION (T-4's unit analysis was inverted; known-issues entry corrected — T-4-era percent rows do NOT heal on re-run: DO NOTHING insert; heal = force re-import or `UPDATE ... SET abandoned_pct=abandoned_pct/100 WHERE abandoned_pct>1`); B2 `assertNotOnAnyRoster_` guard on the alias/rename SOURCE name in `addAgentAlias` + `applyOrphanRename` (a live-roster source would silently reroute that agent's future builds; de-roster first for merges — INV-01 text updated); B3 `saveBulkReport_` caps the bulk report property at 80 tail lines + try/catch (the F2 lastSheets discipline; 9KB ceiling hit ~date 100); B4 `saveDigestConfigRow` lowercases email (Neon exact-case PK vs sheet case-insensitive upsert); B5 `missedEnrichQueueOnlyFromInbound_` binds its (date,id) tuples as `(?::date,?)` params (last inline-SQL deviation closed); B6 `mergeDqeDuplicateRows_` interrupted-apply recovery — `scMergeAlreadyApplied_` multiset-containment detector: a re-run after a crash deletes leftover duplicates WITHOUT re-summing (the old re-run compounded), and byte-identical double-append rows now dedupe instead of doubling; counts-only groups stay unverifiable (logged caution). Docblock idempotence claim rewritten honestly.
+- **Where I left off:** committed/pushed (see git log). NOT deployed. Post-deploy live smoke: UI-flag `dept-team-strip` round-trip from Health; a Caller Lookup double-Enter; Alerts modal drift chip on a dept with hand-edited dup rows; a preview+apply of `repairDqeDuplicateMerge` on a copy. Remaining from the scan ranking: Batches C (sheet-retirement/Neon-outage sweep — prerequisite to the Neon flip), D (guard/tooling + IR server-side prior resolution), E (ops tail + doc sweep), F (strategic/owner-gated: Inbound/Direct un-gating F1, capture-time queue normalization F2, Neon flip F3, drilldown phases F4, legacy decommission F5).
+
+### Prior session (/broad-scan Round 8 + /broad-implement findings 1–5 → R8-1..R8-5)
+Branch `claude/broad-scan-ak8g04`, **405/405 tests** (7 added: 2 R8-1 in missed-report, 2 R8-2 in neon-mirror-tail, 1 R8-3 in orphan-roster-add, 1 R8-3 in dept-config, 1 R8-4 in escalations-hardening), INV-16 green, script.html parses. Deploys: Department Dashboard + cdr-import (NeonMirror.js only).
+- **Fresh 3-stage /broad-scan ran first** (7 parallel subsystem agents, every High/Medium finding re-verified at source). Full ranked findings 1–24 + Stage 3 strategic review in the session transcript. Owner selected findings 1–5 for implementation; the Low tail (findings 6–24, incl. T-4 unit inversion, Direct `:neon` failure row, bulkReport 9KB cap, Caller Lookup seq token, drift duplicateRow, NeonBackup stale parts, negative-cache corners B2/A3/B3) is NOT yet implemented.
+- **R8-1 (was audit finding 1, HIGH/live):** Missed report queue-only sentinel match now uses the inbound name-space union (`inboundQueuesForDept_`, fallback `queuesForDept_`) — R6 matched QCD-canonical names while DQE sentinels carry RAW names, silently dropping CSR's `A_Q_CSR` abandons. missed:v16→v17 (code + 4 docs; cache-version-sync green). **OPERATOR: populate Dept Config → CSR → "Inbound queue aliases" with `A_Q_CSR` (and any other raw-only queue names) or CSR's queue-only card stays empty of main-queue abandons.**
+- **R8-2 (finding 2, latent):** NeonMirror `mirrorDqeForDate_` 36→34 cols (REP-10 propagated); `mirrorQcdForDate_` parses display strings via new `nmInt_`/`nmPctFraction_` (fraction units = the inline writer's, per Config.gs ABANDONED_PCT). Deferred mode is still OFF; it is now safe to validate per Op State #22.
+- **R8-3 (finding 3, security):** `deactivateAgentAlias_` + `sheetDeactivateDeptConfig_` write ONLY the Active cell — the whole-block getValues→setValues round-trip re-armed CORE-7-neutralized formula cells as live formulas.
+- **R8-4 (finding 4):** `escAssertRowAccess_` passes `allDepts` managers (the R-3 class; the role was fully locked out of escalation actions + saw blank activity trails).
+- **R8-5 (finding 5):** client `resolveComparisonWindow_` prevPeriod `Math.floor`→`Math.round` (DST-spanning ranges resolved a one-day-short prior window in IR; server `computePriorWindow_` was already immune).
+- NB: audit markers deliberately named `R8-#`, NOT bare `F#` (that family = Neon read-back codes; collision warning in fix-history, where the R8 table now lives).
+- **Where I left off:** committed/pushed (see git log). NOT deployed. Post-deploy live smoke: S4 (CSR missed queue-only card after the alias is populated), S31 (alias remove — formula-shaped old names stay inert), S36 (Dept Config deactivate), IR "Immediately-preceding period" over a Mar-spanning range (prior window length), escalations as an ALL-sentinel manager (approve/resolve + activity timelines render). R8-2 validation = Op State #22's one-import deferred-mode check, if/when the operator enables it. Remaining: the audit's Low tail above + the parked strategic items (Inbound/Direct un-gating vetting run, Neon flip runbook, legacy decommission, capture-time queue normalization).
+
+### Prior session (/broad-implement Round-7 Batch C — server/ops C1–C4)
+Branch `claude/broad-scan-mowwqb`, **398/398 tests** (10 added: 6 in NEW neon-coverage.test.js, 2 aux in pipeline-watch, 2 uiflags in system-health), INV-16 green, script.html + all edited .gs files parse. Deploy: Department Dashboard only (all four items are dashboard-project).
+- **C1 (M-2)**: `getCallJourney` classifies a miss — on a found:false where the UNSCOPED lookup ran (admins / entitled managers only; a gate-closed manager learns nothing), one cheap probe (`MIN(call_date)` + per-date EXISTS) sets `reason`: `'before-capture'` (+`minDate`) / `'date-gap'` / `'not-captured'`. Client renders an actionable note per reason (date-gap points admins at the coverage check). Owner's Eligibility MM&R case will now self-identify.
+- **C2 (G-2)**: NEW **NeonCoverage.gs** — `runNeonCoverageCheck()` (assertAdmin_, editor-run, READ-ONLY): per-date sheet-vs-Neon row-count reconciliation over `NEON_COVERAGE_DAYS` (=30, ending yesterday) for dqe_history/qcd_history/call_history_dept/direct_call_history (findings: missing-in-neon / count-mismatch / extra-in-neon, each with its runbook fix line), plus `inbound_calls` zero-row-WEEKDAY gaps (holiday-aware via isCompanyHoliday_, floored at MIN(call_date) capture start). One json_agg round-trip per table (the 0403b2c discipline); sheet dates via getDisplayValues + `ncCellDateIso_` (F-3/F-10 rule). Emails admins; `NEON_COVERAGE_LAST(_RESULT)` OPS-8-coded ('ok clean' / 'GAPS n finding(s)' / 'FAILED*'); Health page row `out-coverage` (classifier gained `^GAPS\b`). Pure pieces pinned by tests/unit/neon-coverage.test.js.
+- **C3 (G-1)**: PipelineWatch's hourly run folds two property-backed signals in — a NeonBackup run whose LAST_RESULT isn't ok-prefixed (once per run timestamp, marker `PIPELINE_WATCH_BACKUP_MARK`, re-arms on ok) and a Neon read-back streak `NEON_READ_LAST_ERROR` count >= `PIPELINE_WATCH_READBACK_MIN_STREAK`(=3) (once per streak, marker `PIPELINE_WATCH_READBACK_MARK`, re-arms when the property clears). Pure `pipelineWatchAuxDecide_` (unit-pinned); markers advance ONLY on a confirmed send (OPS-1); aux alerts fold into the failure digest or send standalone via `pipelineWatchAuxDispatch_` on every early-return path; `notifyPipelineFailures_(failures, auxLines)` signature widened (both args optional).
+- **C4 (G-3)**: `UI_FLAGS` admin surface toggles — Config.gs `UI_FLAG_SURFACES` registry (7 keys: dept-team-strip, dept-queue-tiles, dept-missed-section, dept-qcd-side, ov-user-table, ins-heatmap, ins-queue-health); renderDashboard_ injects sanitized `window.__UI_FLAGS__`; client stamps `body[data-ui-flags]`; enumerated `body[data-ui-flags~="key"] … { display:none !important }` CSS rules beat the render paths' inline display; fetch gates on deptMissedFetch_/FrostArm + ins-heatmap loadAbandonHeatmap_ + ovRenderUserTable_ so hidden surfaces don't still fetch; the two strip tiles gained `.dts-tile--queue`. Server RPCs in SystemHealth.gs: `getUiFlags` / `saveUiFlags` (INV-01 config path: assertAdmin_ + registry validation via pure `uiFlagsSanitize_` + LockService.waitLock + Logger audit; empty set DELETES the property). Health page "UI surface toggles" editor (checkbox per registry key, checked = hidden; loads with healthLoad_). Changes apply on the next page load — no redeploy. Harness shim gained lock.waitLock.
+- **Where I left off:** committed/pushed (see git log). ROUND 7 IS FULLY DRAINED (Batches A+B+C). Post-deploy: run `runNeonCoverageCheck()` once from the editor (validates + seeds the Health row); if PipelineWatch isn't installed yet, `installPipelineWatchTrigger()` to get the G-1 signals; try a UI toggle round-trip from Health. NEXT: consolidated /sync-docs pass for Round 7 (calendar v2, sticky bars, UI_FLAGS Op State entry, coverage-check bullet, INV-01 saveUiFlags carve-out note, Subsystems + NeonCoverage.gs, fix-history R7 table). Owner asked-for follow-ups pending their input: an example failing path-drill call (confirms C1's bucket), watermark content beyond the missed clock (none requested), Inbound/Direct un-gating (parity evidence first).
+
+### Prior session (/broad-implement Round-7 Batch B — visual/UX layer B1–B4)
+Branch `claude/broad-scan-mowwqb`, **388/388 tests**, INV-16 green, script.html parses. Client-only (script.html / dashboard.html / styles.html). Deploy: Department Dashboard only.
+- **B1 (O-2)**: global chart animations — `setChartAnimationDefaults_` IIFE sets `Chart.defaults.animation = {duration:400, easing:'easeOutQuart'}` (or `false` under prefers-reduced-motion); ALL 9 per-chart `animation: false` opt-outs removed. Spotlight/pin stays instant (`update('none')` sites untouched); the two plain `update()` sites (Alt-hide, axis rescale) now animate deliberately.
+- **B2 (M-3)**: missed-calls bar chart flipped VERTICAL (time buckets on x, workday reads left→right; `aspectRatio: 2`, every-other x label via ticks callback, counts above bars, tooltip reads `parsed.y`); `maxBarThickness` 16→26. NEW `missedClockWatermark_` inline plugin (owner ask): faint vector clock face (circle + 12 ticks + 10:10 hands, `rgbaWithAlpha_(THEME.muted, 0.14)`) drawn `beforeDraw` behind the bars, skipped under r<24px; radar untouched. styles comment updated (bars-mode width cap rationale).
+- **B3 (M-5/I-2)**: sticky context toplines — `.page-sticky-bar` (position:FIXED top-center, hidden until revealed; backdrop blur; z 90 < modal 100) + shared `initStickyBar_(barId, sentinelSel, pageName)` (IntersectionObserver; reveals when the sentinel scrolls above the viewport top AND the page is active; hidden pages' zeroed rects fail the top<0 test). Dept: `#dept-sticky-bar` (sentinel `#dept-page .controls`, text set in refresh(), ↻ = refresh). Insights: `#ins-sticky-bar` (sentinel `#ins-period-bar`, text set in insSyncPeriodBar_, ↻ = runInsReport).
+- **B4 (I-4)**: `.seg-rich` sub-selector reads secondary — smaller (10px/8.5px, 3px padding), muted titles, active = accent-soft fill instead of full ink inversion; `.ins-view-fade` one-shot fade applied by `insApplyCardsView_` to whichever view becomes visible (Cards⇄Chart, Gap⇄Absolute; reduced-motion no-op).
+- **Watermark content (owner)**: a clock icon — done as vectors (no emoji font dependency).
+- **Where I left off:** committed/pushed (see git log). Live smoke: charts animate on create (and NOT for reduced-motion users); missed bars vertical + clock watermark visible + ramp working (A1); sticky bars appear on scroll on both pages and never on other pages; sub-selector reads lighter; Cards⇄Chart fades. **Round-7 remaining: Batch C** (see the Batch A section below for the approved specs: M-2 journey reason enrichment, G-2 runNeonCoverageCheck, G-1 PipelineWatch gap-fills, G-3 UI_FLAGS registry).
+
+### Prior session (/broad-implement Round-7 Batch A — client fixes A1–A8)
+Branch `claude/broad-scan-mowwqb`, **388/388 tests** (no server changes — all client: script.html / dashboard.html / styles.html), INV-16 green, script.html parses. Deploy: Department Dashboard only.
+- **A1 (O-1 ROOT CAUSE)**: `rgbaWithAlpha_` now delegates to the canvas-based `colorWithAlpha_` when its rgb() regex misses — `colorToCanvasRgb_` returns HEX for opaque colors (canvas fillStyle normalization), so every `rgbaWithAlpha_(THEME.*)` callsite was silently returning the input UNCHANGED: the chart tooltip stayed opaque despite the alpha-0.6 setting AND the missed-bar volume ramp was flat (all bars solid warn). One fix repairs tooltip translucency + the ramp + any other translucent THEME fill. Side-card tooltip panel = parked fallback if the owner still wants it after seeing this live.
+- **A2 (O-3)**: the 'selected'/'My Dept' tile badge + mini-table title are view-as-aware (`isAllDeptViewer_() && !viewAsDept_`); manager wording is now 'My dept:'; `applyViewAs_` pre-paints hero/table/tiles from `ovLastData` instantly before the live re-fetch (the badge used to sit stale for seconds in view-as).
+- **A3 (M-1)**: new `deptMissedFrostArm_()` frosts the missed section from `refresh()` START (all roles) — the frost previously armed only when the missed fetch began (after the summary returned), leaving a stale unfrosted window; `onError` unfrosts (no missed fetch coming).
+- **A4 (M-4)**: Queue-calls tile per-day sub renders only when workdays > 1.
+- **A5 (I-1)**: calendar v2 — (a) ‹ › MONTH PAGINATION (`insCalMonth_`, one month per view, defaults most-recent, resets on window change; the old all-weeks render CLIPPED past month 1 inside the 420px `.ir-chart-wrap` — calendar mode now also releases the height via `.ir-chart-wrap--cal`); (b) 'Abd %' cell metric (`insCalMetric='abd'`, backed by `queueHealth.dailySeries` ISO rows, 5%-threshold color ramp, queues-tab entry auto-defaults to it, self-heals to 'pct' when no series); (c) the Line⇄Calendar toggle stays VISIBLE but disabled (`.segmented.is-disabled` + reason title via `insCalendarIneligibleReason_`) on ineligible tabs/windows — it used to vanish (the owner's "not seeing calendar" was a saved Abd%/ATT tab pref + this hiding). Eligibility now includes the queues tab; ATT stays line-only. Prefs accept 'abd'.
+- **A6 (I-3)**: re-runs over a rendered report frost the WHOLE `#insights-results` (SWR pre-paint stays readable under it; live/fail clears; SWR status note suppressed under frost — the dept-table M3 precedent). Intro card is show-once-automatically (first render marks `cdr.ins.intro.v1`).
+- **A7 (N-1)**: `#ins-refresh-btn` (results header, next to My Department →) re-runs `runInsReport()` in place. NOTE: server report cache still applies (30-min TTL).
+- **A8 (N-2)**: `insAgentHasActivity_` filter — zero-activity agents (rung+missed+answered all 0) are dropped from BOTH cross-agent charts (gap + absolute); cards untouched.
+- **Where I left off:** committed/pushed (see git log). Live smoke: tooltip translucent + bar ramp visible; view-as badge flips to 'My Dept' instantly; missed frost visible as manager; 1-day range hides /day sub; calendar month arrows + Abd% metric + disabled toggle tooltip on ATT tab; date-change frosts whole Insights report; intro card gone on 2nd entry; Refresh button; ex-employees absent from Agents charts. **Round-7 remaining: Batch B** (O-2 global chart animations reduced-motion-aware; I-4 seg-rich sub-selector smaller/lighter + view-switch transitions; M-5/I-2 sticky toplines dept+Insights; M-3 vertical missed bars RECOMMENDED swap — time on x reads as a workday timeline; watermark parked pending owner content) + **Batch C** (M-2 getCallJourney found:false `reason` enrichment (before-capture / date-gap / not-captured) + ask owner for a concrete example; G-2 `runNeonCoverageCheck` per-table per-date sheet-vs-Neon gap/mismatch + Health section + runbook pointers, inbound = zero-row-weekday check; G-1 approved gap-fills: NeonBackup failure + Neon read-back streak fold into the hourly PipelineWatch email; G-3 approved `UI_FLAGS` Script Property + registry: dept team strip, Queue-calls/Abd tiles, missed section, QCD side card, Overview mini-table, Insights heatmap, Insights queue health; admin editor on Health page).
+
+### Prior session (R6 queue-only fix + /broad-implement density Phase 2)
+Branch `claude/broad-scan-mowwqb`, **388/388 tests** (2 added: R6 pins in missed-report), INV-16 green, script.html parses. Deploy: Department Dashboard only.
+- **R6 (owner report; missed:v16, committed separately):** queue-only abandoned SENTINEL rows now attribute by QUEUE NAME against the dept's effective list (`queuesForDept_`, case-insensitive) instead of shared-EXTENSION overlap — other depts' queues no longer leak onto the card; unmapped/no-abandon dept renders no card; noRing/abandoned counts follow. Fixture stubs (`h.ctx.queuesForDept_`) added to missed-report/missed-slice/dal-cutover suites. If a queue that used to appear goes missing live → map it in Dept Config (Op State #14).
+- **Phase 2 #8:** `#ins-views-btn` Views menu — personal named saved views (`cdr.ins.views.v1:<email>`, max 12; snapshot = SHARE_STATE_ state incl. `view=simple|detailed` via a provider WRAPPER; no dept) + Copy share link (reuses `encodeShareParams_` + the `#/report/insights?…` deep-link path — normal auth/fetch on open). `insApplyViewState_` re-checks a rendered picker directly; missing agents param = uncheck all (agent-free).
+- **Phase 2 #10:** Line ⇄ Calendar trend renderer (`#ins-trend-render-toggle`, `insTrendRender`/`insCalMetric` prefs): Mon–Fri day-grid over the SAME `trendDaily` series (no server change), 92%-target / missed-intensity coloring via color-mix, in-cell numbers, per-day drill via new shared `insDrillToRange_` (extracted from insTrendPointDrill_), gated to 14–366-day windows + team tabs (`insCalendarEligible_`); calendar branch early-returns in insRenderTrendChart_ (hides canvas/view-toggle/datalabels box).
+- **Phase 2 #9:** `sendInsightsReportEmail({style:'summary'})` + Export → "Email summary": `renderInsightsEmailSummary_` (Digest.gs) = takeaway + rollup tiles + behind-team-average list (min `INSIGHTS_EMAIL_MIN_CALLS_`=10; plain definition, not the client tier replica). Same auth/compute/recipient.
+- **Where I left off:** committed/pushed (see git log). Live smoke: R6 (Power page shows only A_Q_PowerChairs card or none), Views save/apply/delete + share-link round-trip (incl. density restore), Calendar toggle on a 30-day window (color/drill/metric seg; hidden on <14d + Abd%/ATT tabs), Email summary arrives short-form. Remaining parked: legacy dqe-report decommission, capture-time queue normalization (owner schema), CONFIG_SOURCE flip (optional).
+
+### Prior session (/broad-implement density-design Phase 1 — Insights Simple/Detailed)
+Branch `claude/broad-scan-mowwqb`, **386/386 tests**, INV-16 green, script.html parses. ALL CLIENT-ONLY (dashboard.html/script.html/styles.html + CLAUDE.md bullet); no compute/cache/gate change. Owner design doc reconciled against code first (conflict register in-chat): form-wall item redirected to the POPOVER (form is retired), #ins-needs-attention is the headline chips, remember-last-view + share-link + email tie-in already largely shipped.
+- **D1 Simple/Detailed**: `insDensity` ('simple'|'detailed'; ROLE DEFAULT manager=simple/admin=detailed via lazy `insIsSimple_`; sticky via prefs blob additive `density` field). Header `#ins-density-toggle` segmented control. Simple = `ds-density-simple` class hides `#ins-team-detail` / `#ins-trend-wrap` (+ its zone label via :has) / Chart controls; `insApplyCardsView_` forces cards display (pref untouched); on-track tiers (On par + Ahead) collapse behind `.ins-ontrack-details` "+N on track"; `#ins-simple-note` with inline Switch-to-Detailed. C3 chart trap handled: render pass SKIPS trend/share/heatmap in Simple; `insSetDensity_('detailed')` rebuilds all three (heatmap admin-only). Quick-chips landing inside Team detail auto-switch to Detailed (insScrollPending_ branch).
+- **D2 popover Advanced**: compare select + custom-prior row + agent search/list/select-links wrapped in `#ins-edit-advanced` <details> (IDs/wiring untouched; Apply stays outside); auto-opens when comparisonMode==='custom' or a partial agent selection is active.
+- **D3**: first-run intro card `#ins-intro-card` (dismiss -> `cdr.ins.intro.v1`); #6 all-clear headline line (no behind-team agents AND |team pct Δ| <= 1.5 pts, `INS_ALLCLEAR_MAX_PTS_`); #7 small-sample guard (`INS_SMALL_SAMPLE_PER_AGENT_`=10 avg answerable/agent -> `#ins-small-sample` note + `.ins-small-sample-mode` mutes delta pills); Abd%/ATT subtab native titles; Simple-only Agents caption `#ins-agents-cap`.
+- **Where I left off:** committed/pushed (see git log). Deploy: Department Dashboard only. Live smoke points: toggle Simple→Detailed on a rendered report (trend draws, both tabs; share after opening Team detail; heatmap loads for admin), chips from Simple land open+spotlighted, popover Advanced auto-open with custom prior, manager default = Simple / admin = Detailed, prefs stickiness. Phase 2 parked: saved views + copy-share-link (#8), calendar trend renderer (#10), summary email variant (#9).
+
+### Prior session (post-deploy owner rounds 4+5 — dept strip/table, no-ring gate, inbound cleanup + stage split, misc polish)
+Branch `claude/broad-scan-mowwqb`, **384/384 tests** (3 added in inbound-calls: direct-stage + firstAgent), INV-16 guard green, script.html parses.
+- **Round 4 (commit 71fe243):** team strip = %Ans(rings) · Queue calls (+≈N/day over workdays via workingDaysBetween_) · Answered · Abd% (Missed/ATT tiles dropped); Total-calls column folded into the split bar as muted "(N)" (CSV splices a numeric column); parentIdBadge + info-line admin-only for non-admins; Insights no-ring drill GATED+counted via one whole-window getMissedCallsSlice prefetch (case-insensitive queue match, serves clicks instantly; failure reveals plain buttons); heatmap lens renamed 'Missed Rings'; ATT trend tab data-admin-only (+pref fallback); Abd% tab styled like team tabs (single-queue = filled curve, no legend; multi-queue = 2.2px/0.4 tension); Inbound v4: byInsurer/byDialInInsurer labeled-only, byQueue queue-entered-only.
+- **Round 5:** (1) missed:v15 — `missedEnrichQueueOnlyFromInbound_` stamps waitSec + insurer label on queue-only abandoned entries (one bounded IN-list query, best-effort/Neon-optional, PHI: label only); client renders '· waited M:SS · <insurer>' (.qo-facts). (2) inbound:v5 + capture: abandon_stage gains 'direct' (abandon leg carries a real Departments value = person; IVR stays ivr; old rows heal on force re-import within Call_Legs retention), NEW inbound_calls col `first_agent` (first person leg; phone-shaped skipped); byDialIn display labels: DIAL_IN_LABELS Script Property map (dashboard; "number = Label, ...") > derived mode(first_agent) (catalog-probe-guarded for deploy order) > raw number (kept in `number`); client adds companyView 'Abandoned direct' tile. (3) missed section frost+ripple while fetching (dm-loading min-height). (4) access_denied primary button opens GMAIL web compose (mailto kept as small fallback). (5) Access Control: 'ALL — every department' option in the dept picker (server sentinel already existed) + remove-confirm via dsConfirm_.
+- **Where I left off:** committed/pushed (see git log). DEPLOYS: Department Dashboard + cdr-import (inboundCalls.js). Operator: set `DIAL_IN_LABELS` (dashboard Script Property) for the main lines; force re-import recent dates (or run backfillInboundCalls) to heal ivr->direct + populate first_agent; QCD flip runbook (README) for the 251s qcd-alldept cold time. Owner questions answered in-chat (IVR artifact, dial-in derivation, ALL role exists).
+
+### Prior session (/broad-implement Batch 10 — Report Usage review, P-6, live smoke)
+Branch `claude/broad-scan-mowwqb`, **381/381 tests** (14 added: 2 P-6 in neon-write-mapping, 7 in NEW smoke-check.test.js, 5 usage in system-health), INV-16 guard green, script.html JS parses.
+- **P-6 (both INV-16 neonWrite copies)**: `writeCDRRowsToNeon` gains `opts.authoritative` — the IMP-5 per-date replace for the LAST mirror family: in-txn DELETE of the payload dates' `call_history_phones` CHILDREN first (parent-id subselect — a deleted parent would strand children / trip an FK), then the `call_history_dept` parents, before the insert. Date derivation guards ISO input against parseDateForNeon's UTC-midnight shift (all three callers pass ISO). Callers: daily inline mirror (autoImport ~1777) + deferred `mirrorCdrForDate_` (NeonMirror) pass it; the bulk post-`dedupeAlreadyArchived_` mirror stays NON-authoritative (partial set, note added mirroring the QCD sibling's). Known window (documented in-code): main txn commits before the phone-child txn — a phone failure leaves the date's children absent until the existing retry paths re-run. Non-authoritative path pinned byte-identical.
+- **Report Usage review**: the telemetry sheet finally has a reader — `SystemHealth.gs::computeReportUsageSummary_` (30-day window, bounded 5000-row tail read with an explicit "window clipped" note) renders a per-report "runs · unique users · N by managers / admin-only use · cache-hit% · last used" MUTED section on the Health page (busiest-first; `managerRuns` is the un-gating signal). Config.gs REPORT_USAGE comment updated; client HEALTH_SECTIONS_ gains `usage`.
+- **Live smoke harness**: NEW `SmokeCheck.gs` — `runLiveSmoke()` (editor-run, assertAdmin_, READ-ONLY) sweeps 7 live checks (sheet-open, latest-dqe-date source-aware, dept-summary, missed-report, agent-free insights over 7d, qcd-alldept on the latest QCD day, Neon SELECT 1 — unconfigured = informational pass, unreachable = FAIL). Per-check try/catch + timing; failed prerequisites cascade as labeled "skipped:" FAILs; REPORT_USAGE_SUPPRESS_ held true during the run (F-27). Emails getAdminEmails_() + stores SMOKE_LAST/SMOKE_LAST_RESULT (OPS-8 prefix-coded 'ok N/N'/'FAILED k/N'); surfaced as the Health page's new `out-smoke` outcome row. Harness shim gained Session.getScriptTimeZone.
+- Docs: CLAUDE.md (IMP-5 rule 4 gains the P-6 CDR entry; System Health bullet gains the usage section + smoke row; Subsystems + SmokeCheck.gs), fix-history Batch-10 table.
+- **Where I left off:** committed/pushed (see git log). Deploys pending: Department Dashboard (SystemHealth, SmokeCheck NEW FILE, Config, script.html) + cdr-import (neonWrite, autoImport, NeonMirror) + cdr-report (neonWrite). Post-deploy: Run → runLiveSmoke once from the editor (consents nothing new; validates the deploy). Remaining: legacy dqe-report decommission (T-8) + the deferred capture-time queue normalization (owner schema decision) — the 2026-07 broad scan is otherwise fully drained, strategic items included.
+
+### Prior session (/sync-docs + /broad-implement Batch 7-9, gates KEPT)
+Branch `claude/broad-scan-mowwqb`, **367/367 tests** (2 added: inbound-qcd-parity.test.js NEW), INV-16 guard green.
+- **Batch 7 (docs) COMPLETE**: Batch 5+6 archived (fix-history C-#/T-# rows; known-issues P-8 + T-1 + compact 5+6 list; CLAUDE.md tour parenthetical now states the FIXED behavior).
+- **Batch 8 (vetting slice; gates stay ON per owner)**: NEW `compareInboundVsQcdAbandons_` + `runInboundQcdParityCheck` (InboundReport.gs; admin-gated, read-only; `INBOUND_QCD_PARITY_FROM/_TO/_DEPT` props, default last-14-days/all-mapped-depts) — per-dept per-day join of QCD Abandoned (canonical queues, source-aware grid) vs inbound_calls abandons via the SAME `inboundDeptPredicate_`, strict + answered-on-hold reported separately, plus the window's UNATTRIBUTED raw entry-queues. This is the quantification the un-gating decision needs. **DEFERRED with rationale**: capture-time raw→canonical queue normalization — the alias column maps dept→raw names; a rewrite needs raw→SPECIFIC-canonical, ambiguous for multi-queue depts (needs an owner mapping-schema decision, e.g. `raw=canonical` syntax), and it mutates vetting-pending inbound data. Admin gates on Inbound/Direct NOT touched (owner instruction).
+- **Batch 9 (flip)**: code side was already complete (R-1); consolidated the full 8-step operator flip runbook (DQE → QCD → CONFIG, indexes, backfills, parity gates, soak, reversibility) into README's Neon read-back section.
+- **Where I left off:** committed/pushed (see git log). Deploys pending: Department Dashboard (InboundReport.gs + all prior batches) + cdr-import + cdr-report. Operator next: walk the README flip runbook when ready; run `runInboundQcdParityCheck` + populate Dept Config inbound aliases as the vetting path toward un-gating. Remaining: Batch 10 strategic only (smoke harness, Report Usage review, legacy decommission, optional P-6) + the deferred capture-time normalization (owner schema decision first).
+
+### Prior session (/broad-implement Batch 5 & 6 — THE SCAN'S FIX BATCHES ARE DRAINED)
+Branch `claude/broad-scan-mowwqb`, **365/365 tests** (5 added: 2 T-1 merge in NEW sheet-repairs-merge.test.js, 1 P-8 in csr-transfer, plus prior batches), INV-16 guard green, extracted client JS parses. Deploys needed: Department Dashboard (Batch 5) + cdr-report + cdr-import (Batch 6).
+- **Batch 5 (client-only)**: C-1 merged the two `#ins-trend-header` writers (the #4 range label finally renders, + the by-queue suffix); C-2 tour replay closes the SETTINGS modal (its real home; F-42 discipline kept); C-3 Overview mini-table WoW tooltips read their OWN response meta (`ovUserMeta_` + `wowChipMetaOverride_` render-context override in `wowChipHtml_`); C-4 router `[data-route="..."]` lookups escape the hash; C-5 the all-dept QCD CSV title line routes through the shared escaper (comma in "Jul 10, 2026" split columns); C-6 `irRenderCharts` restores panel visibility on its empty-datasets early return; C-7 removed double-encoding `escapeHtml` in the two textContent Neon-health renderers; C-8 `reportReqSeq_` gains `inb`/`dir` tokens (Inbound + Direct runners join the stale-response guard family); C-9 `escCssId_` ESCAPES quotes/backslashes instead of stripping (attribute-selector lookups can now match names containing them).
+- **Batch 6 (tools)**: T-1 `mergeDqeDuplicateRows_` rebuilds AD/AE/AF as ONE time-sorted paired list + trailing unpaired ids (the F-2 lockstep; #REBUILD rows skipped, all-lost stays sentinel; unpairable AE/AF tails logged; total_unique double-count now comment-labeled an approximation) — pinned by NEW tests/unit/sheet-repairs-merge.test.js (shim gained SpreadsheetApp.flush). T-2/T-3 null-date poison-row guards in `backfillCDRHistory` + `backfillQCDHistory` (skip + log, resume can't wedge). T-4 `abandoned_pct` stored in PERCENT units matching the inline writer ('%'-suffixed = percent; bare <=1 = fraction ×100). T-6 DQEdrilldown col-W gate uses the IMP-8 boundary regex. T-7 `writeDiagnostics` clears the previous panel's FULL height (stale rows ≥12 beyond col 40 no longer strand). P-7 `queueToPendingArchive` REPLACES a type's stale queued rows when the run produced fresh rows (never deletes without a replacement; `parseHistoryDateCell_`-era note: alreadyQueued Set removed, `queuedRowsByType` + `producedTypes`/`markProduced`). P-8 new `parseHistoryDateCell_` (ISO text → local noon) at all four dup-guard/dedup/force-delete comparison sites.
+- **Where I left off:** committed/pushed (see git log). NOT deployed. Docs pending (/sync-docs): fix-history Batch 5+6 rows; known-issues P-8 note under the date-coercion section; T-4 pct-unit note; nothing INV-numbered changed. Remaining scan work: Batches 8-10 strategic only (queue identity + Inbound un-gating; Neon flip execution — now fully unblocked; smoke harness / Report Usage review / legacy decommission / P-6 optional). ALL corrective findings from the 2026-07 broad scan are now implemented.
+
+### Prior session (/broad-implement Batch 3 & 4)
+Branch `claude/broad-scan-mowwqb`, **362/362 tests** (14 added), INV-16 guard green. Dashboard-only deploy.
+- **Batch 3**: R-1 — the three sheet-hardwired QCD readers now honor `QCD_READ_SOURCE`: `computeDeptQcdSnapshot_` (Data.gs; windowed neon read = range ∪ MTD ∪ 180-day latest-day lookback) and `computeQcdSnapshots_` (CompanyOverview.gs; window = min(sinceIso, mtdStart)..today, exactly the old in-loop filter) route through `readQcdGrid_` (sheet path unchanged + now memo-shared); `getLatestDataDates`' QCD component uses new `neonGetMaxQcdDate_` (QCDReport.gs) with sheet fallback, and its cache key suffix became the COMBINED `readSourceCacheTag_()` (one-time cold read on deploy; INV-30 doc update pending). **The Op State #30 flip runbook is now actually safe — remove the R-1 warning from CLAUDE.md after deploy.** O-5 — SystemHealth: tenth sheet in the expected list, `trg-queuereport` trigger row, `out-queuereport` outcome row, OPS-8 classifier flags `^MISSED`. O-6 — PipelineWatch widens its tail read x4 (≤3 times, F-20 pattern) via new pure `pipelineWatchTailClipped_` so a >300-row storm can't evict unexamined failures before the watermark advances.
+- **Batch 4**: R-2 — Caller Lookup truncation keeps the ascending list's TAIL (newest). R-3 — allDepts-manager widening: `getCallJourney` (+ F-4 fallback entitlement `|| user.allDepts`), `inboundResolveRequest_`, `directCallResolveRequest_` pin only `manager && !allDepts`. A-1 — `applyOrphanRename` pre-flights the Agent Alias Overrides sheet BEFORE the rename when alsoAddAlias (the audit-gap edge closed; the "audit before returning" doc claim holds again). A-2 — `escRowFull_` selects `occurred_at` so approve emails carry "When". A-3 — `getActiveDeptConfigMap_` is FIRST-active-row-wins (matches the save editor; OPS-9 convention). A-4 — `approveEscalation` refuses unknown-dept rows (fail-open on roster-read failure) with a reject-and-resubmit message. Gap #3 — `escPendingReviewPing_` (Escalations.gs): count-only, PII-free admin ping for new `pending_review` submissions, polled from `runPipelineWatch_`'s hourly run (dispatched FIRST, before its early returns), gated by NEW Script Property `NOTIFY_PENDING_REVIEW` ('true' to enable, default OFF; requires the PipelineWatch trigger, Op State #32), OPS-1 watermark `ESC_REVIEW_PING_WATERMARK` (baseline-silent; advance only on confirmed send).
+- Test doubles updated: overview-qcd-snapshot + qcd-report reset `QCD_SHEET_DATA_MEMO_`; system-health fixture installs the tenth sheet; qcd-report fake conn's MAX(call_date) stub returns the bare ISO.
+- **Where I left off:** committed/pushed (see git log). NOT deployed — Department Dashboard only (`clasp push -f` + New version). Docs pending (/sync-docs): Op State #30 warning removal, INV-30 latestDates combined suffix, Op State #32 + INV-55 ping/A-4, fix-history Batch 3+4 rows. Remaining scan batches: 5 (C-1..C-9 client), 6 (T-1..T-7, P-7/P-8 tools), 8-10 strategic. Post-deploy note: installs whose setup() predates the queue report will now (correctly) warn "missing: Queue Report Subscribers" on Health — re-run setup().
+
+### Prior session (/broad-scan 3-stage audit + /broad-implement Batch 1 & 2)
+Branch `claude/broad-scan-mowwqb`, **348/348 tests** (14 added), INV-16 guard green, script.html extracted-JS clean.
+- **Ran a fresh full 3-stage /broad-scan** (6 parallel subsystem agents; every High/Medium finding re-verified at source). Verdict: auth/SQL/XSS/cache all clean; residual risk = pipeline data-loss edges on the newer Neon-only writers + scheduled-send reliability in the newest email engines. Full ranked findings + 10-batch plan in the session transcript. Top 5: P-2 (PHI bypass), P-1 (inbound authoritative delete), O-1 (queue-report send loop), O-3 (silent un-monitoring), R-1 (QCD_READ_SOURCE doc-vs-code gap — NOT yet fixed, Batch 3).
+- **Implemented Batch 1 (pipeline)**: P-2 autoImport `join()` always emits the `|` separator when an external side exists + BOTH neonWrite copies hash phone-shaped entries on the internal path too (external-only NOP cells no longer bypass IMP-12 masking; old rows heal on re-import); P-1 `writeInboundCallsToNeon` gains `opts.expectedDateIso` — stray-dated records DROPPED, authoritative DELETE pinned to the import's date (all 3 callers pass it); P-3 `processNewImport` reads+validates the source BEFORE the force-delete block; P-4 `buildDirectCallFromRaw_` gains `opts.expectedDate` refusal (F2 pattern; both callers pass dateObj); P-5 `writeDirectCallRowsToNeon_` runs the authoritative date-DELETE even for an empty row set (matches dcWriteSheet_).
+- **Implemented Batch 2 (dashboard ops)**: O-1 queue-report per-recipient try/catch + marker-on-partial-success + `notifyQueueReportSendFailures_` (FAILED-ALL leaves marker unset → retry; preview path still throws); O-7 `queueReportFlagMissedDay_` (post-window polls flag a never-sent day ONCE: `QUEUE_REPORT_LAST_MISSED` + MISSED result + one admin email; fresh installs suppressed); O-2 digest total-failure clears the run marker (same-day retry possible) + `DIGEST_LAST_RESULT_<cadence>` props surfaced in getDigestsInit; O-3 unknown-dept validation (alerts: `error` outcome + "⚠ unknown dept" modal chip; digests: skip + admin-notify instead of all-zero digest; both fail-open if the roster read fails); O-4 OPS-9 first-row-wins dedup + `duplicateRow` flag in `parseDigestConfigValues_` (key email+dept) and `readQueueReportSubscribers_` (key email), send loops skip flagged rows; O-8 Alerts modal defaultDate = `prevBusinessDayIso_`.
+- Harness: formatDate shim gained the single-`H` token (unpadded hour — the queue-report window gate).
+- **Follow-up in-session:** /sync-docs RAN + APPLIED (commit f8ff9dd): CLAUDE.md (Op State #30 R-1 coverage warning, #31 O-1/O-4/O-7 semantics + QUEUE_REPORT_LAST_MISSED, #12 DIGEST_LAST_RESULT diagnostics, INV-45 O-2/O-3/O-4, INV-34 O-3/O-8, Neon-write rule 4 P-1 + PHI-healing note, M2 bullet P-3, direct bullet P-4/P-5, tour-in-Settings), README (ten sheets, tour wording), known-issues (ten sheets, IMP-12/P-2 entry), fix-history (new P-#/O-# family section — NB O-# ≠ OPS-#), Setup.gs docblock, sheetRepairs.js T-5 comments. ALSO shipped the Batch-2 UI follow-ons: Report Subscribers duplicateRow chips (digest + queue rows) and the digest "Last runs" line (#al-digest-last-results, warn-tinted on FAILED-ALL).
+- **Where I left off:** committed/pushed (44a5e10 + f8ff9dd). NOT deployed — needs cdr-import + cdr-report + Department Dashboard pushes (see summary OPERATOR/DEPLOY). Remaining scan batches: 3 (R-1 QCD readers + O-5/O-6), 4 (R-2/R-3/A-1..A-4 + review-notify), 5 (C-1..C-9), 6 (T-1..T-7/P-7/P-8), 7 (doc sweep), 8-10 strategic. PHI healing for pre-P-2 rows: force re-import recent dates (Call_Legs retention permitting); older external-only cells' raw CNAMs need `backfillCDRHistory` (hashes phone-shaped) or SQL cleanup for name strings.
+
+### Prior session (/broad-implement — lighter Insights↔My-Department hand-off + summary strip + drilldown)
+Branch `claude/reports-escalations-design-c2t0n7` (design-update track, PRs #159-167 merged; this is the follow-up). **304/304 tests**, INV-16 guard clean, script.html parses. Client-only (dashboard.html + script.html + styles.html); no server/cache/endpoint change. The owner-approved "lighter alternative" (keep two pages, make the relationship explicit) — scoped to NAVIGATIONAL hand-offs per "lighter alternative first."
+- **Hand-off (both directions, dept is the shared global selector so only DATES are carried):** `handoffToInsights_(from,to,scroll)` (parametrized `launcherOpenInsights_` — arms `insLauncherAutoRun_` + `insEnsureRoster()`) and `handoffToMyDept_(from,to,{missed})` (mirrors `launcherOpenMissed_`; `missed:true` arms `deptMissedScrollPending_`).
+- **Collapsed Insights summary strip on My Department** (`#dept-insights-strip`, `renderDeptInsightsStrip_` called beside `renderDeptTeamStrip_` in `render()`): one-line teaser (answer-rate + missed, from the SAME server totals — no new fetch) + expand (`.dis-more`) describing what Insights adds + "Open full report →" (→ `handoffToInsights_` with the dept-page dates). Delegated wiring (`wireDeptInsightsStrip_`, once, survives innerHTML swaps).
+- **Insights → My Department affordances:** header "My Department →" button (`#ins-open-mydept-btn`) + Queue-health "See missed calls →" drilldown (`#ins-qh-missed-link`, `{missed:true}`), both wired in `initInsightsReport`.
+- CSS: `.dept-insights-strip`/`.dis-*` + `.ins-handoff-link` (styles.html, reduced-motion aware).
+- **DECISION:** built the LIGHTER (navigational) drilldown. The agent missed-calls bar chart already has its per-bucket detail (`makeMissedBucketDetail_`); the heatmap already has its per-cell drill; so the only NEW drill affordance is Queue-health→Missed. DEFERRED as heavier follow-on: deep per-cell / per-weekday-hour cross-page drilling into a specifically-filtered missed view (heatmap weekday×hour has no clean missed-section equivalent).
+- **Where I left off:** merged? see git log / PR. NOT deployed (Department Dashboard `clasp push -f` + New version — owner). Live smoke: S1 (My Dept strip renders + expand + Open full report → Insights carries dates), S32/S37 (Insights "My Department →" + Queue-health "See missed calls →" land on the dept page / scroll to missed). Prior track follow-ups still open: `insWorstMover_` dead code; the heavier per-cell drilldown above.
+
+### Latest session (/broad-implement I4 — Insights unified period slider + trend-chart move) [MERGED PR #167, squash b98dad2]
+I4 shipped: `#ins-period-bar` preset slider (Last 7/Last 30/MTD/YTD/Custom…) drives the whole Insights window via `runInsReport` (preserving compare mode + agents); the 12-month trend chart moved out of the Team-detail <details> to an always-visible bottom "Trends" section (measure-guarded `insDrawTrendChart_`). Client-only; no cache bump.
+
+### Latest session (/broad-implement: L2 + LM2 + strategic hardening)
+Branch `claude/broad-scan-ekn18f`, **292/292 tests** (6 new), INV-16 + cache-version-sync green. 16 files.
+Implemented the deferred/strategic set:
+- **L2**: `writeInboundCallsToNeon({authoritative:true})` -- per-date REPLACE (DELETE payload dates in-txn before upsert) so a shrinking re-import can't leave a phantom in the dashboard-read, sheet-primary-less `inbound_calls`. Both callers (daily inline + per-date backfill/deferred) pass it (complete-per-date). Fake-conn test in inbound-calls.test.js.
+- **LM2**: `neonFetchDqeRows_` marks `out._neonReachable`; all 6 cutover consumers gate on the shared `neonDqeRowsUsable_` -- reachable-empty is TRUSTED (skip redundant sheet scan), only unreachable/errored `[]` falls back (aligns with the neon cutover contract). Helper test in dal-cutover.test.js.
+- **Health single signal**: SystemHealth "Recent pipeline step failures" row -- flags a step only when its LATEST outcome is failure (recovered steps don't warn; no wolf-crying). Catches :neon inline mirrors, neonMirror:* drains, guardForceRebuildLoss_. 2 tests.
+- **Escalation notify on approve**: `approveEscalation` now also fires `escNotifyNewEscalation_` (Phase 2's real new-escalation inflow is team-tools->pending_review->approve, not create). Same flag/PII gating.
+- **Data-loss guard convention**: new shared `guardForceRebuildLoss_(ss, step, dateObj, force, wroteCount)` (autoImport.js) -- on force+0-rows logs a `<step>` failure Pipeline Health row (caught by the Health signal), no throw. Applied to QCD (dashboard-read force-path writer with no empty-rebuild handling); DQE keeps its stronger M2 throw. Documented as a Common Gotcha. csr-transfer.test.js pins the helper.
+Docs: CLAUDE.md gained the force-path convention + Health-signal gotchas; updated IMP-5 (inbound now authoritative), INV-55 §1 (notify on approve), F1 read-back (LM2 reachable-empty).
+Where I left off: committed/pushed? see git log. NOT deployed (Dashboard + cdr-import clasp pushes pending). Every ranked finding from the original scan is now implemented or explicitly deferred-with-reason (the remaining defers -- LM3/S2-6/S2-7/L8/sheetRepairs edges/L5-doc -- are the truly-low-value/frozen ones).
+
+### Prior session (/broad-implement: P2 + P3 fixes + /sync-docs)
+Branch `claude/broad-scan-ekn18f`, **286/286 tests**, INV-16 guard green. 15 files.
+Implemented P2: L1 (source-suffix IR/Insights/Missed cache keys, CORE-3), L3 (IR prefs per-email `irPrefsKey_`), L4 (Access Control email/dept via sheetSafeCell_), L6 (escCleanDateTime_ rejects impossible calendar dates via UTC round-trip + test), L9 (getEscalationActivity denial returns not-found shape, no existence oracle), L10 (inboundDeptPredicate_ COALESCE(abandoned_on_hold,false)), L11 (neonFetchDqeRows_ resets out=[] on error so a mid-loop throw falls back to sheet), S2-3 (agent table `.agents-table-wrap` overflow-x), S2-4 (.qcd-warn-strong -> var(--bad)), S2-5 (dark-mode .date-preset-chip.active override).
+P3: neonbackfill null-date skip (both backfill loops, prevents poison batch), NeonBackup stale-parts-on-shrink trash, dbReporting undefined-dept binds SQL NULL, keepNeonWarm_ outer try/catch.
+DEFERRED (with rationale): L2 (inbound authoritative replace -- risky transactional DELETE on no-sheet-fallback table for a Low finding; needs a deliberate tested change), LM2 (empty-vs-unreachable -- current conflation is protective during mirror lag), LM3 (deferred-mirror per-type independence -- M effort, opt-in), S2-6 (CacheWarm budget -- marginal), S2-7 (dead-branch test -- reports still admin-only), L8 (roster-missing guard -- sensitive), sheetRepairs PST-half/preview-format edges. L5 (ATT wording) -> doc.
+Then ran /sync-docs (apply): see next commit for doc updates (INV-44 :CDR:neon/:QCD:neon steps, number-coercion AF gotcha, CORE-3 IR/Insights/Missed, fix-history resolved notes, freshness 250, CSV five writers, README Insights builders).
+Where I left off: P2/P3 + docs committed/pushed? see git log. NOT deployed (Dashboard + cdr-import + cdr-report clasp pushes pending). All ranked findings now addressed or explicitly deferred.
+
+### Prior session (/broad-implement: P0 + P1 fixes)
+Branch `claude/broad-scan-ekn18f`, **286/286 tests** (added 2), INV-16 guard green, buildDQE copies byte-identical.
+Implemented 7 findings (P0: M1/M2/M3; P1: S2-1/S2-2/L7/LM1). 10 files, 3 subsystems.
+- **M2** (both buildDQEHistoricalData.js copies + autoImport.js): force-path silent DQE loss. New `refuseIfForce_` helper throws (mirrors IMP-7) on the empty/no-dates/zero-rows early-returns, GATED on `opts.force` (threaded a `force` param into processIntegratedHistory + both build call sites) so the daily NON-force F5 rows:0 path is unchanged -- only a force re-import (rows pre-deleted) alerts. New test in pipeline-build.test.js.
+- **M1** (NeonBackup.gs): backup Health row amber-on-every-run. Summary now LEADS with `ok`/`FAILED` so the OPS-8 `/^ok\b/` classifier is correct (was starting with a table name + always contained "skipped"). New test in system-health.test.js.
+- **M3** (neonbackfill.js ×2 + NeonMirror.js): AF (`abandoned_missed_times`) routed through `sanitizeSlotCellForNeon_(r[31]) || null` (was the ID sanitizer) so a coerced date-render is RECOVERED not mirrored as garbage; `|| null` preserves empty→NULL. Sanitize FUNCTIONS untouched (F-24/F-51 guard green -- only call sites changed).
+- **S2-1** (styles.html): dark-mode Print blank page -> `@media print` re-asserts the light palette + `print-color-adjust:exact`.
+- **S2-2** (styles.html): neutral toast invisible in dark mode -> `color: var(--paper)`; success/error re-assert `#fff`.
+- **L7** (autoImport.js): inline CDR/QCD Neon-mirror errors now log `processIntegratedHistory:CDR:neon` / `:QCD:neon` Pipeline Health failure rows (parallel to `buildDQE:neon`/`:Inbound`).
+- **LM1** (CompanyOverview.gs): watchdog/banner false-alarm -> `computeOverviewPipelineFreshness_` scan window widened 40 -> `OVERVIEW_PIPELINE_FRESHNESS_SCAN_ROWS=250` so a deferred-mirror retry storm can't evict the DQE-freshness row.
+Where I left off: fixes complete + committed/pushed? see git log. NOT deployed (Dashboard + cdr-import + cdr-report clasp pushes pending, operator). DOC updates pending (INV-44 new steps, number-coercion gotcha AF, fix-history M1/M2/M3 resolved) -> run /sync-docs. Remaining scan findings (P2/P3) not started.
+
+### Prior session (/broad-scan 3-stage audit + /broad-implement: CLAUDE.md split)
+Branch `claude/broad-scan-ekn18f`, 284/284 tests, INV-16 guard green. Working tree: 3 files changed, none deployed (docs only).
+- **Ran a full 3-stage /broad-scan** (8 parallel subsystem agents + 2 Stage-2 deep-dive agents; every top finding independently verified at source). Verdict: mature, well-tested, airtight auth + correct core math; residual risk clusters in **observability** and **force-path/edge handling**, plus lots of **built-but-dormant** capability (Neon read-back/config-Neon default to sheet; Inbound/Direct admin-only "while vetted"; Escalations Phase-2 unfed). Full ranked findings + effort in the session transcript (P0: M2 force-reimport silent DQE loss, M1 SystemHealth backup always-amber, M3 AF sanitizer mis-routing — all Small).
+- **Implemented (scope = docs only, per /broad-implement args)**: split CLAUDE.md into current-invariants (CLAUDE.md stays live truth) vs a new **`docs/fix-history.md`** historical fix-log (code taxonomy + per-family index tables F-#/bare-F#/IMP/CORE/RPT/OPS/NEO/M/E/TST, the dashed-vs-bare-F and S#-overload collision warnings, and codes that are in code but NOT CLAUDE.md: CORE-7/OPS-8/NEO-5/NEO-6). Added two additive CLAUDE.md pointers (Read-first bullet + Common-Gotchas note). **Did NOT** do the aggressive in-place shrink (risk of dropping a live rule) — awaiting owner go-ahead; AskUserQuestion was interrupted so defaulted to the safe non-destructive archive.
+- **Guard preserved**: `docs/fix-history.md` is intentionally OUT of cache-version-sync.test.js's DOC_FILES (holds historical `prefix:vN` literals) — documented in the file's migration note. Do not add it.
+Where I left off: split complete + committed? NO — changes are in the working tree, NOT yet committed/pushed (user drove this interactively; commit on request). Findings NOT implemented — queued for a future `/broad-implement <ids>`, recommend P0 trio (M2/M1/M3) first.
+
+### Prior session (/sync-docs sweep after feedback rounds 1-4)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green.
+- **Caught a real shipped inconsistency**: the round-3 chip rename ("When did we miss calls?") landed only in dashboard.html's Overview static block -- the `launcherRowHtml_` builder edit was dropped when the round-3 edit batch failed on read-state and only half was re-issued, so Insights + My Department showed the OLD label. FIXED in script.html (builder + comment). Lesson: after a failed multi-edit batch, re-verify EVERY edit in the batch landed, not just the ones re-issued.
+- Doc fixes: CLAUDE.md Operator State intro (Health under the Admin ▾ dropdown); README Outlier Fix / Dept Config now "under the Admin dropdown", deep-link list gained `#/report/direct` + `#/admin/access-control` + `#/admin/health`, missed-route note (inline on My Dept), ↗-button phrasing covers the Insights page; known-issues.md gained the **QCD blank-date incident** entry (07/03-07/10 rows with blank col C: daily path can't produce it -- one dateObj to all four sheets; bulk `parsePendingDate` -> Invalid Date -> blank IS possible; repair = hand-fill or force re-import, Neon mirror shares the gap; capture Pipeline Health rows if it recurs).
+- Verified clean: all subsystem file lists match disk; all INV-30 cache versions match code; no new operator-state items (rounds 1-4 were client-only); frozen dqe-report rationale intact.
+Where I left off: sync-docs sweep committed+pushed, PR + merge on CI green.
+
+### Prior session (post-deploy owner feedback round 4 -- Admin dropdown + rings labeling)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green. Client-only (script.html/dashboard.html) + docs; Department Dashboard-only deploy.
+- **Admin dropdown**: Alerts / Outlier Fix / Dept Config / Access / Health collapsed into one `.header-menu` "Admin" group (`#admin-menu-btn` / `#admin-menu-list`, dashboard.html) mirroring the Reports group -- initHeaderMenus_ + updateTabActiveState_ are already generic, so ZERO script.html changes were needed; items keep ids/data-route/data-admin-only (deep links, F11 guard, Overview-nag programmatic clicks unchanged); wrapper carries data-admin-only (managers + view-as never see it). Caller Lookup deliberately left top-level (owner listed exactly 5; fold-in is a one-move follow-up). Chose dropdown over a dedicated Admin PAGE: modals keep drag/resize/deep-links/all wiring; a page conversion (Insights-scale project) remains possible later.
+- **'% Answered (rings)' label** on the Insights rollup tile (benchValueCls_ still matches via /answer/); glossary gains `'% answered (rings)'` plain + rich entries (exact-key match would otherwise have dropped the tooltip).
+- **Owner Q&A (no code)**: rollup Answered = sum of DQE col H over the window for agents EXACTLY on the dept roster (sentinels INV-23 + orphans + floaters excluded; reads NEON dqe_history when DQE_READ_SOURCE=neon -- a sheet-vs-neon manual-sum mismatch is expected if the mirror lags). Missed (rings) = col G same scope, ring-level. Violations (MTD) = computeMtdViolations_: sum of the Violations COLUMN over rows source='Total Calls', dept's OWN queues, date >= 1st of current month, NO range upper bound -- vs per-queue violationDates which are RANGE-scoped days where the column >0; 2-vs-3 is two different windows/scopes, verify by summing col L for July over the dept's own queues.
+- **QCD blank-date incident (owner report)**: daily import writes ONE dateObj to CDR/QPath/QCD/CSR alike (autoImport.js:1763), so a QCD-only blank date column doesn't match the daily path; the only code path that can write a blank date is the BULK Pending Archive path (`parsePendingDate` -> Invalid Date -> blank cell on setValues). Advised sheet-edit as likely cause; repair = fill dates or force re-import those dates; Neon qcd_history probably shares the gap for those rows.
+- Docs: CLAUDE.md router bullet (dropdown re-collapse note), S31/S36 steps, Insights popover bullet (rings label), Help nav topic (dashboard.html).
+Where I left off: round 4 committed+pushed, PR + merge on CI green.
+
+### Prior session (post-deploy owner feedback round 3 -- date honesty pass)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green. Client-only (script.html/dashboard.html) + docs; Department Dashboard-only deploy.
+- **Popover position**: `reportHeadline_`'s insertion-anchor loop also skips `.ir-edit-popover` siblings, so the headline ("Watch"/"On track" banner) inserts AFTER the popover -- the Insights/IR edit panel now expands directly beneath its button instead of below the banner. Existing pages fix themselves on next full render (the headline element is created once per page life).
+- **Chip rename**: "Why did we miss calls recently?" -> "When did we miss calls?" in BOTH `launcherRowHtml_` (script.html) and the Overview static block (dashboard.html); routing unchanged. README launcher bullet also refreshed (it still described the pre-round-2 four-report routing).
+- **Daily Call Queue Report default**: new `latestQcdIso_` (stashed from the init getLatestDataDates fetch, next to latestDqeIso_) drives `qcdAllDeptDefaultDates_`; fallback = new `prevWorkdayIso_` (walks back from yesterday over Sat/Sun + __COMPANY_HOLIDAYS__ ranges, 30-step guard). Preset select stays honest: 'yesterday' only when the chosen date IS literal yesterday, 'today' if today, else 'custom'. The explicit Yesterday/Today PRESET options keep literal semantics.
+- **Insights date line**: `insWorkdaysLabel_` (server meta.currentWorkDays preferred, client workingDaysBetween_ fallback -- covers <=30min of pre-deploy cached blobs) appends "· N workdays" to `#ins-results-date`, plus "last 30 days" when the range matches the launcher default; the compare line appends the prior window's workdays "(N workdays)" before the length/overlap flags.
+- **QCD side-panel note is now DIAGNOSTIC** (round-2 note wasn't enough): when snapshot day != page To, `#dept-qcd-date` compares against `latestQcdIso_` -- company QCD newer than the dept's => "check the dept's queue mapping" wording (renamed-queue drift is the usual cause); else "queue data lands separately from the agent call data (through <latestDqeIso_>)". Answered to the owner: the panel date is the newest QCD row for THIS dept's mapped queues; DQE (drives the page default) and QCD land in different import blocks and can diverge -- if 07/06 rows exist in QCD col D under a spelling the dept's effective list misses, that's the mapping case the new note flags.
+Where I left off: round 3 committed+pushed, PR + merge on CI green. Owner backlog unchanged (backfills + smoke list).
+
+### Prior session (post-deploy owner feedback round 2 -- form retirement, quick-start chips everywhere, dept-page fixes)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green. All client-side (script.html/dashboard.html/styles.html).
+- **Insights setup form RETIRED from the normal flow (owner)**: first entry AUTO-GENERATES (insEnsurePage_ arms insAutoRunPending_, consumed in insRenderAgentList after the prefs-restored pending selection lands; nothing checked = agent-free whole-dept run INV-45; loading pane via launcherShowLoading_); insSetDefaultDates default = the launcher window (last 30 ending yesterday -- the CacheWarm-warmed request, was MTD); "« Back" button DELETED (markup + wiring); the form survives HIDDEN as the failure/empty-roster fallback (insShowForm -- roster-failure + report-failure + empty-roster paths all land there); launcher flag clears insAutoRunPending_ so no double run. **The popover can now EXPRESS a custom prior**: Compare=custom option + #ins-edit-prior-row Prior from/to inputs (prefilled from the main form's last-used values), insApplyEditPopover_ validates + stages them -- required because the form was the only custom-prior surface. Deep-link/digest ?state applies after setPage and the auto-run picks it up (digest links now auto-generate).
+- **Quick-start chips on ALL THREE pages** (launcherRowHtml_ one source of truth; injected into new #ins-launcher (.ins-page-body top) + #dept-launcher (dept page, above controls); Overview's static block kept in sync manually -- comment says so). **Every chip lands on + SPOTLIGHTS its answering section**: qsSpotlight_ (scrollIntoView + .qs-spotlight accent-ring pulse, reduced-motion static, one-shot) -- team-lately -> ins-kpi-row, abandons -> ins-queue-health, agent-trend -> ins-agent-cards (REPOINTED from the Individual Report's primed form -- launcherOpenIndividual_ DELETED; there was never an 'old IR', just IR's setup form), missed -> dept-missed-section (deptMissedScrollPending_ consumption now spotlights). insScrollPending_ consumed at end of insRenderReport_ (SWR pre-paint consumes it too).
+- **My Department fixes**: (1) missed BAR chart first-render blank -- deptMissedResize_ now rebuilds ONCE from deptMissedLastData when the chart still measures 0x0 after settle+resize (deptMissedRebuilt_ guard, re-armed when healthy); (2) QCD side panel: Answered+Abandoned merged into one "Ans / Abd" tile (green/warn split, .dept-qcd-ans/abd/sep); (3) when the snapshot day != the page To date, a VISIBLE note ("latest queue day -- the page's date range doesn't apply here") renders in #dept-qcd-date (was hover-title only).
+- Docs: CLAUDE.md multi-page bullet (auto-generate + form-fallback), popover bullet (custom-prior capability), anti-intimidation launcher bullet (rewritten: chips on 3 pages + spotlight + agent repoint), S14/S18/S19/S32/S37 steps reworded for the form-less flow.
+Where I left off: round 2 committed+pushed, PR + merge on CI green. Owner still to run: backfills + smoke. NOTE for smoke: first Insights entry now auto-runs; custom-prior now set via the popover.
+
+### Prior session (post-deploy owner feedback round 1 -- 5 UX notes)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green. Owner redeployed + is testing; five notes implemented:
+1. **Freshness pill role-tiered**: non-admins get `.freshness-pill--subtle` (quiet inline text, no box; `setFreshnessPill_` toggles by USER.role); `.is-stale` warn tint still wins for both roles.
+2. **Trend classification per working day**: NEW `insPerDayMetrics_` (script.html) adjusts volume metrics' deltaPct onto per-working-day values before deltaClassify_/deltaImprovementScore_/deltaIsQuiet_ at ALL consumers (cards enriched block, headline top/bottom + regressed count, CSV classification cols); server meta gains currentWorkDays/priorWorkDays (InsightsReport.gs, + empty shape; NO cache bump -- client falls back to unadjusted when a pre-deploy cached blob lacks them, <=30min). Badges keep raw totals; trend-pill tooltip explains the per-day basis. Rates + equal-workday windows numerically unchanged.
+3. **Cards-chart basis selector**: 'vs Prior' RETIRED (insRenderCardsChartPrior_ deleted; saved 'prior' pref restores as 'gap'); the two remaining options render as `seg-rich` two-line choices (title + hint) -- new CSS variant in styles.html.
+4. **Insights edit affordance promoted**: `#ins-edit-selection-btn` moved from the tiny editing-line "change" link into the results action row as a real button ("✎ Edit dates & agents"); same id so ALL popover wiring (open/apply/outside-click guard) untouched. NOTE: the popover itself already existed -- this was discoverability.
+5. **Call Path fixes**: (a) journey times display-shifted PST->CST via new `clCstTime_` (+2h, INV-18 convention) in clJourneyRowHtml_/callJourneyHtml_/clCallCardHtml_; (b) builder sort gains LEG_ID tiebreak for same-second legs (inboundCalls.js -- STORED journeys keep old order until re-imported/backfilled); (c) synthetic "Call ended" terminal row (`clJourneyEndRowHtml_`, .cl-ev-end style) at max(leg start+duration), "caller disconnected here" when abandoned -- appended in BOTH journey consumers (dept drill + Caller Lookup).
+Docs synced: CLAUDE.md freshness bullet, per-agent-cards bullet (per-working-day classification), consolidation bullet + S19 (vs-Prior retirement), inbound bullet (call_start display shift + end row); Help topic (dashboard.html) Gap/Absolute only.
+DEPLOY: Department Dashboard + cdr-import (inboundCalls.js ordering). Owner's in-flight backlog: backfills (were in progress), smoke list.
+Where I left off: feedback round committed+pushed, PR + merge on CI green. Awaiting more test notes from the owner.
+
+### Prior session (broad-implement: Batch F -- polish backlog, THE SCAN IS NOW FULLY DRAINED)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests, INV-16 guard green (incl. the new brace-counting extractor), extracted-JS + shell syntax clean. Docs synced INLINE (the chained /sync-docs): CLAUDE.md INV-34 (OPS-9), INV-45 (OPS-6 + OPS-2), INV-54 (CORE-6), Op State #28 (OPS-4/5), deploy.sh key-commands note (TST-7); known-issues.md Batch-F section (fixes + the 5 accepted deferrals).
+- **OPS-2**: digest lock narrowed to a run-CLAIM (DIGEST_RUN_MARKER_<cadence> Script Property set under a short lock, sends run UNLOCKED; a died-mid-sends run leaves the marker set -- same loss as the old timeout, failure email still fires); alerts tryLock 15s->120s. **OPS-11**: alerts scan DQE ONCE per run (alertRowsForDate_ per-execution memo; ~14 depts previously re-read the whole sheet 14x). **OPS-6**: invalid digest cadence flagged (invalidCadence+cadenceRaw, modal chip) not dropped. **OPS-9**: duplicate Alert Config dept rows first-row-wins + duplicateRow flag + skipped log + modal chip.
+- **OPS-4**: NeonBackup months fetched in 4 week-windows (bounds JDBC strings); >8MB months written as .partN.jsonl (parts count as closed; stale single file trashed). **OPS-5**: CONFIG_SOURCE=neon => dept/alert/digest_config snapshotted as <table>-latest.jsonl per run.
+- **REP-1**: dashboardCDR diagnostics panel FLOATS right of the report (col = max(12, lastColumn+2)); previous column remembered in CRB_DIAG_COL prop, its rows 1..11 cleared (rows >=12 are wiped by the render's 40-col clear). **REP-4** ('N/A' parent-id filter, both buildDQE copies -- INV-16 re-synced). **REP-5** (csr_team null guard). **REP-7** (10-digit insurance numbers -> +1 prefix + log). **REP-9** (slot repair applies per column group end-to-end). **REP-10** (neonbackfill reads 34 cols not 36, 3 sites).
+- **CORE-6** (dept's own effective queues always valid on save), **CORE-8** (emptySummary_ totals carry rosterAgentCount/queueOnlyAgentCount; rowsScanned clamped >=0), **CORE-9** (Diagnostics dates default to getLatestDataDate(); cross-file-const dependency documented), **RPT-4** (Insights neon path uses deptQueueExtsForNeonReader_ -- last full-sheet ext read gone), **RPT-5** (orphan-parent depts render top-level with a log line instead of vanishing), **RPT-9** (emptyIndividualReport_ meta mirrors the populated shape), **RPT-10** (getQcdAllDepartments logs Report Usage, dept='ALL', both paths).
+- **TST-1** (shim WeekDay duplicate key removed), **TST-6** (guard extractor counts braces), **TST-7** (deploy.sh gates on npm run ci; DEPLOY_SKIP_CI=1 escape hatch). tests/README already canonical-directory style (TST-2 previously handled).
+- **DEFERRED (documented in known-issues.md)**: OPS-3 (CacheWarm TZ-vs-browser date miss -- Central-office user base), OPS-10 (drive->drive.file narrowing -- operator's call, needs re-consent + live verify), REP-6 (extraction-tool drift detection -- mini-project), REP-8 (slot-aware DQE drill), TST-4/5 (frozen legacy, per audit ruling).
+DEPLOY: Department Dashboard (Alerts, Digest, Data, DeptConfig, Diagnostics, CompanyOverview, IndividualReport, InsightsReport, QCDReport, NeonBackup, script.html) + cdr-report (dashboardCDR, dataFilters, insuranceNumbers, neonbackfill, sheetRepairs, buildDQE INV-16 sync) + cdr-import (buildDQE). Behavior notes: alert emails no longer double-send on dup rows; the digest no longer blocks alerts; Q-Path counts for comma-joined ext rows appear (IMP-2 landed in Batch E; this is its sibling infra).
+**THE BROAD SCAN IS FULLY DRAINED** (Batches A-F + the first fix batch + IMP-4 + the Insights page conversion). Remaining operator backlog: the three deploys; backfillDQEHistoryUpsert + parity re-run 05-18..05-22; backfillInboundCallsForce after the cdr-import deploy; the Insights-page smoke list (docs/insights-page-plan.md); optional Neon backup re-consent if OPS-10 is ever picked up.
+Where I left off: Batch F committed+pushed, PR + merge on CI green.
+
+### Prior session (broad-implement: Batch E -- owner-ruled accuracy + the back-to-insights highlight)
+Branch `claude/broad-scan-d60m5l`, 284/284 tests (4 added: REP-3 + IMP-8 in pipeline-build, RPT-7 in digest-wow, IMP-12 in neon-write-mapping), INV-16 guard green. OWNER RULINGS captured: REP-3=include no-ring abandons in AH; RPT-8=ratify weighted; IMP-12=stop storing raw names; RPT-6=document the difference.
+- **REP-3** (both buildDQE copies): csrAbanIds also attributes abandoned parents via their own parent legs' calleeName queue identifiers (the Pass-4 method) scoped to DQE_CSR_QUEUES -- AH now includes no-ring CSR abandons. FORWARD-only: pre-fix rows keep rung-only semantics until rebuilt; AH will read HIGHER from deploy onward (the correction). No cache bump (sheet values change only on rebuild).
+- **IMP-8** (both buildDQE copies, Pass 2 + Pass 4): queue regex -> `(?:^|[^\w&])(A_Q_[\w&]+|Backup CSR)` -- &-names stay whole (A_Q_Eligibility_MM&R), embedded tokens (UDC_A_Q_Main) no longer phantom-match A_Q_Main (they now DON'T match at all -- capturing the full token would break INV-23's ^A_Q_ sentinel detection).
+- **IMP-12** (both neonWrite copies): cdrParseNameFieldJson_ masks external non-phone CNAM displays to initials via new cdrMaskExternalName_ ("SMITH JOHN"->"S.J."); internal + sheet-side raw unchanged; old rows heal on re-import.
+- **IMP-2** (autoImport.js): queueMap exclusions/queueExtensionSet split comma-joined cells (dcBuildExtMaps_ pattern, raw kept); deptQueues carries exts[] and the Q-Path matcher tests each ext, counting a path once per row (old single-string regex /103,108(?!\d)/ matched nothing).
+- **IMP-10** (inboundCalls.js): icParseTs_ -> Date.UTC; icIsoDate_/icIsoTime_ -> UTC getters. Pure wall-clock math, DST-immune; never mix with Date.now() (comment pinned). Wall-clock output identical outside DST edges -- existing inbound tests unchanged.
+- **RPT-7** (CompanyOverview.gs computeWowDriver_): narrative metric is dominance-based both directions; positive weeks require the missed delta to be a DROP; ties fall to 'answered'. digestWowNarrative_ already phrases "missed N fewer ... answer-rate gain" correctly; ovBuildWowDriver_ is a stub. INV-48 text updated.
+- **RPT-8**: QCDReport.gs comment now states the weighted mean is owner-RATIFIED intent (docs already matched). **RPT-6**: Overview-tile-ATT-is-weighted vs My-Dept-simple-mean pinned in CLAUDE.md ATT bullet + docs/conventions.md.
+- **Cosmetic (pre-batch)**: IR closeModal now reverts the header-tab highlight via setTimeout(setRoute_(basePageRoute_())) -- covers the Back-to-Insights button + Escape closes that initRouter's .modal-close/[data-close] hook missed.
+- Docs: known-issues.md gained REP-3/IMP-8 entries (source-pipeline section), IMP-12 (neonWrite section), new "Batch-E CDR Import fixes" section (IMP-2/IMP-10); CLAUDE.md INV-48 + ATT bullet.
+DEPLOY: cdr-import (buildDQE, neonWrite, autoImport, inboundCalls) + cdr-report (buildDQE, neonWrite -- INV-16 sync) + Department Dashboard (CompanyOverview.gs, QCDReport.gs, script.html). NOTE: AH semantics + Q-Path counts + inbound overnight ordering all shift at deploy (each is the intended correction).
+REMAINING scan work: Batch F only (polish backlog: OPS-2/3/4/5/6/9/10/11, REP-1, REP-4..10, CORE-4/6/8/9, RPT-4/5/9/10, TST-1/6/7). Operator backlog unchanged (backfillDQEHistoryUpsert + parity re-run; backfillInboundCallsForce after cdr-import deploy; the pending dashboard deploys).
+Where I left off: Batch E committed+pushed, PR + merge on CI green.
+
+### Prior session (Insights modal->page conversion: Phases 7+8 of 8 -- COMPLETE, PR)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests, INV-16 guard green, extracted-JS + div/section nesting clean, repo-wide insights-modal refs = 0. **Conversion complete; shipped as ONE PR** (Phases 1-8; docs/insights-page-plan.md has the full checklist + the post-deploy manual smoke list).
+- **Phase 7 (copy/docs)**: tour gained an Insights-tab step; "Deeper reports" step now = the admin dropdown (Individual + Inbound/Direct); Help "The four pages" + nav topic + Insights-is-a-page lead-in; CLAUDE.md swept (multi-page bullet now 4 pages, INV-37 rewritten to the multi-page model, IR-drill paragraph, router/deep-link bullet incl. the page-branch SHARE_STATE_ note, draggable-modals count, "buttonId repoint"->"page repoint" x2, INV-45 + S14/S32 modal->page); docs/known-issues.md digest wording. NO cache-version strings touched (cache-version-sync stayed green).
+- **Phase 8 (verification)**: automated checks all green (nesting/syntax/tests/guard). Manual smoke deferred to POST-DEPLOY (needs the live app) -- the 8-item list is in docs/insights-page-plan.md: S37 e2e, S14 + performance deep link, digest deep link WITH ?query state, launcher chips + forced roster failure, IR drill round-trip, open-in-new-tab, S23 tab states + re-entry + chart resize, view-as-manager.
+OPERATOR after merge: deploy Department Dashboard (clasp push -f + New version, or scripts/deploy.sh), then walk the smoke list. No setup() re-run, no Script Properties, no web-editor file deletions (the conversion deleted no server files). Prior backlog unchanged: backfillDQEHistoryUpsert + parity re-run for 05-18..05-22; backfillInboundCallsForce after the cdr-import deploy.
+Remaining scan work: Batch E (owner rulings: REP-3, RPT-8, IMP-12), Batch F (polish). Optional polish noted in-conversion: Back-to-Insights tab-highlight refresh (pre-existing cosmetic class), Insights results header could carry its own kicker once page-native design is revisited.
+
+### Prior session (Insights modal->page conversion: Phases 5+6 of 8 -- launcher + CSS finish)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests, INV-16 guard green, extracted-JS syntax clean. NOT deployable until the post-Phase-8 PR (docs/insights-page-plan.md = live checklist, 6 of 8 checked).
+- **Phase 5 (script.html)**: launcherOpenInsights_ calls setPage('insights') (guarded on $('insights-page')) instead of clicking the tab; everything else unchanged. Re-entry launch double-fetch (insEnsurePage_'s old-dates roster call then the launcher's new-range re-ensure) is race-safe via the CL1-3 insRosterReqSeq_ token -- same shape the modal era had.
+- **Phase 6 (styles.html + script.html)**: ins-printing print block retargeted #insights-modal/.modal-panel -> #insights-page/.ins-page-body (width unconstrained, form/open-tab-btn/toolbars hidden, quiet-details + page-break rules kept, dead .modal-backdrop line dropped); NEW insResizeCharts_() (deptMissedResize_ double-rAF pattern) called from insEnsurePage_ on EVERY entry -- re-measures insChartInstance/insShareChartInstance/insCardsChartInstance so a window-resize while on another page can't leave them mis-sized. Repo-wide insights-modal refs now ZERO (dashboard.html/script.html/styles.html all 0).
+- 1440px visual polish deliberately deferred to the Phase 8 manual smoke (fluid grids expected to stretch cleanly).
+Where I left off: Phases 5+6 committed+pushed (NO PR). NEXT: **Phase 7 -- copy/docs sweep**: tour "Deeper reports" step (Insights is a top-level tab now, not in the Reports menu), #help-topic-insights wording, Reports-menu title (already updated in Phase 1 -- verify), CLAUDE.md (multi-page architecture bullet: pages list + INV-37, the Insights-consolidation bullet's "modal" wording, router bullet's routes list, per-report prefs bullet if needed, S14/S18/S19/S32/S37 scenario wording, INV-51 prose), docs tables' prose, README if it mentions the modal. Then **Phase 8 -- verification** (extracted-JS check, node --test, the manual smoke list in the plan doc incl. the digest deep-link with query state) and the SINGLE PR.
+
+### Prior session (Insights modal->page conversion: Phase 4 of 8 -- IR drill simplification)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests, INV-16 guard green, extracted-JS syntax clean. NOT deployable until the post-Phase-8 PR (docs/insights-page-plan.md = live checklist).
+- **Phase 4 (script.html only)**: irDrillToAgent_ detects the Insights origin via `document.body.getAttribute('data-page') === 'insights'` (both $('insights-modal') probes deleted -- script.html now has ZERO insights-modal refs; only styles.html's ins-printing block remains, Phase 6). The modal hide (drill entry) and re-show + scroll-lock-keep (IR closeModal's irCameFromInsights_ branch) are deleted -- the page sits behind the IR overlay all along; the flag survives solely for the Back-button visibility swap; drill-close restores body overflow and deliberately does NOT move focus (the old btn.focus() target is the admin-only Reports-dropdown Individual item).
+- Pre-existing cosmetic carry-over noted (unchanged): closing IR via the Back-to-Insights button doesn't refresh the tab highlight (initRouter's revert hook only covers .modal-close/[data-close] clicks) -- same class as the documented Escape-close gap.
+Where I left off: Phase 4 committed+pushed (NO PR). NEXT: **Phase 5 -- launcher**: launcherOpenInsights_ calls setPage('insights') instead of btn.click() (behavior-identical today since the tab click handler just calls setPage, but removes the DOM-indirection); auto-run flag / loading pane / CL1-2 failure fallback unchanged. Then Phase 6 (print-CSS retarget to #insights-page + .ins-page-body, charts-resize on page re-entry, polish), Phase 7 (copy/docs sweep incl. CLAUDE.md INV-37/multi-page/consolidation bullets + tour/help), Phase 8 (verification + the single PR).
+
+### Prior session (Insights modal->page conversion: Phase 3 of 8 -- initInsightsReport rework)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests, INV-16 guard green, extracted-JS syntax clean. Still NOT deployable until the post-Phase-8 PR (docs/insights-page-plan.md = live checklist).
+- **Phase 3 (script.html only)**: initInsightsReport's modal machinery DELETED (openModal/closeModal/onKeyDown, trapFocus_/releaseFocus_/resetModalTransform_/initModalDragResize_ calls, closeBtn/backdrop listeners, scroll lock); guard now `if (!btn || !page) return;` with `page = $('insights-page')`; ALL form/popover/export wiring kept verbatim and now ACTIVE (was dead behind the modal guard since Phase 1); the 3 delegated listeners (card IR-drill click, hover-prefetch mouseover/mouseout) retargeted modal->page; the 3 dead insights-solo-btn blocks deleted (init reveal else-branch, proxy IIFE, View-as toggle -- top-level tab has no data-admin-only so view-as keeps it).
+- Post-Phase-3 state: the Insights PAGE is functionally complete -- tab/deep-links/launcher/generate/popover/export all wired. Remaining known gaps: IR drill degrades gracefully (irDrillToAgent_ probes the absent modal -> fromInsights=false -> IR just overlays the page, no "Back to Insights" button; close reveals the page) = Phase 4; print CSS still targets #insights-modal (the page section sits OUTSIDE .container so body.ins-printing>.container{display:none} doesn't hide it, but the panel/form-hiding selectors no-op) = Phase 6; copy/docs sweep = Phase 7. script.html insights-modal refs down to 2 (both irDrillToAgent_, Phase 4).
+Where I left off: Phase 3 committed+pushed (NO PR). NEXT: **Phase 4 -- IR drill simplification**: irDrillToAgent_ detects origin via `document.body.getAttribute('data-page')==='insights'` (drop both $('insights-modal') probes ~5257/5308); keep irCameFromInsights_ for the Back-button visibility swap; IR closeModal's irCameFromInsights_ branch just restores overflow + re-shows nothing (page is already there) -- delete the modal re-show + scroll-lock keep. Then Phases 5-8.
+
+### Prior session (Insights modal->page conversion: Phase 2 of 8 -- router/page plumbing)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests, INV-16 guard green, extracted-JS syntax clean. Still NOT deployable (one PR after Phase 8; docs/insights-page-plan.md holds the live checklist).
+- **Phase 2 (script.html only)**: setPage gains 'insights' (whitelist + kicker "Reports · Insights"/title + setRoute_ -> '/report/insights'); NEW `insEnsurePage_` (+`insPageInited_` flag: first entry = insShowForm/insSetDefaultDates/insRestorePrefs_/insEnsureRoster in openModal's exact order; re-entry = insEnsureRoster only, never clobbers rendered results); ROUTES_ re-typed all 4 routes ('/report/insights' + the performance/compare/qcd repoints) to `{kind:'page', page:'insights'}` (buttonId/modalId dropped); basePageRoute_ returns '/report/insights' when data-page=insights (IR-drill modal close restores the tab highlight); the deep-link NO-TRIGGER page branch now applies SHARE_STATE_ params after setPage (the Digest.gs email deep-link keeper; retired repoints have no provider -> quietly dropped, unchanged). PULLED FORWARD from Phase 3: tab click -> setPage('insights') at the top of initInsightsReport (the deep-link trigger path clicks the tab; the route re-types were dead without it), followed by the `if (!btn || !modal) return;` guard -- the modal machinery below is untouched dead code until Phase 3.
+- Intermediate state: page opens + form shows; the Overview launcher auto-run MAY work end-to-end (runInsReport is called programmatically; insRestorePrefs_'s compare-mode dispatchEvent no-ops with no listener); manual form controls (Generate/presets/popover/export) unwired until Phase 3. initRouter's modal-close loop skips the re-typed defs cleanly (kind filter).
+Where I left off: Phase 2 committed+pushed (NO PR). NEXT: **Phase 3 -- initInsightsReport rework**: delete openModal/closeModal/trapFocus_/drag-resize/scroll-lock/Escape/backdrop machinery, drop the modal guard so the form/popover/export wiring below runs (keep it all verbatim), delete the dead insights-solo-btn wiring blocks (init reveal, proxy click, View-as toggle -- all null-checked no-ops today). Then Phases 4-8 per the plan doc.
+
+### Prior session (Insights modal->page conversion: Phase 1 of 8 -- markup move)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests, INV-16 guard green. Owner approved the full conversion plan (now at **docs/insights-page-plan.md** -- decisions + per-phase checklist live there): (1) top-level Insights tab, (2) `#/report/insights` stays canonical, (3) re-entry keeps the rendered report, (4) 1440px page body. **The conversion lands as ONE PR after Phase 8 -- intermediate commits are NOT deployable.**
+- **Phase 1 (this commit)**: dashboard.html -- `#insights-modal` shell deleted, panel-body contents lifted into `<section id="insights-page" class="page page-insights"><div class="ins-page-body">` (outside `.container`, the Escalations precedent; ALL inner ids unchanged); open-in-new-tab button relocated as first child of `.ins-page-body` (same class + data-open-tab-route, the wiring loop keys on those); top-level Insights tab added carrying the stable `#insights-report-btn` id; `#insights-solo-btn` (the #10 manager proxy) removed -- its script.html wiring is null-checked so it no-ops until the Phase 3 cleanup; Reports dropdown loses the Insights item (title text updated). styles.html -- `body[data-page="insights"]` display rule + `.ins-page-body` (1440px, position:relative anchoring the open-tab button, top/right 0 override).
+- **INTERMEDIATE STATE: Insights is UNREACHABLE** -- initInsightsReport early-returns ($('insights-modal') null, so NOTHING is wired incl. the generate button) and setPage doesn't know 'insights' yet. div/section nesting verified balanced; zero insights-modal refs left in dashboard.html; script.html (7) + styles.html (3, the ins-printing block) refs remain BY DESIGN for Phases 3/6.
+- Prior small fix also merged this session: PR #149 (Inbound/Direct/all-dept-QCD last30 presets end yesterday).
+Where I left off: Phase 1 committed+pushed (NO PR). NEXT: **Phase 2 -- router/page plumbing** per docs/insights-page-plan.md: setPage gains 'insights' (first-entry init = insShowForm + insSetDefaultDates + insRestorePrefs_ + insEnsureRoster; re-entry only re-ensures roster, never clobbers results), ROUTES_ re-types the 4 routes (incl. the 3 legacy repoints) to kind:'page', currentRouteFallback_ + setPage's setRoute_ mapping gain insights, AND the deep-link page branch must apply SHARE_STATE_ query state (the Digest.gs email deep-links carry ?from=&agents= -- the one subtle bit). Then Phases 3-8. Operator backlog unchanged (backfillDQEHistoryUpsert + parity re-run; backfillInboundCallsForce after cdr-import deploy; dashboard deploy for Batch D + PR #149 can go out anytime BEFORE this conversion's WIP commits -- deploy from main, not this branch).
+
+### Prior session (broad-implement: Batch D -- client staleness/races, script.html + dashboard.html only)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests (none added -- script.html is outside the harness; extracted-JS `node --check` clean), INV-16 guard green. NO server/cache changes; ALL fixes are client-only.
+- **CL1-1**: Overview stale-response token (`ovLoadSeq_`; both handlers guarded) so a View-as switch mid-flight can't paint the other role's payload; `#ov-company-aggregate` gained `data-admin-only` in dashboard.html (belt-and-suspenders under the View-as CSS hide; server strip unchanged).
+- **CL2-1**: shared `reportReqSeq` split into `reportReqSeq_={ir,ins}` -- an Insights run no longer invalidates an in-flight IR drill (and vice versa).
+- **CL1-2**: insEnsureRoster failure handler now cancels `insLauncherAutoRun_` + `insShowForm()` (the IR #1-Part-B pattern) -- a launcher-chip roster failure no longer strands the eternal loading pane.
+- **CL1-3**: per-picker roster stale tokens (`irRosterReqSeq_`/`insRosterReqSeq_`) on BOTH the init fetch and the 350ms debounced refetch -- an out-of-order older response can't repaint the picker or poison rangeKey.
+- **CL1-4**: My-Dept `onError(err, hadSwrPaint)` keeps the SWR-painted table under a "couldn't refresh" error instead of wiping to empty (the behavior refresh()'s comment already promised).
+- **CL1-5**: `callJourneySeq_` token on the "↳ path" journey overlay (rapid double-drill can't cross-paint).
+- **CL1-6**: `deptMissedScrollPending_` disarmed on missed-fetch failure + the no-dept early return (a leaked one-shot no longer yanks the page down on a later unrelated refresh).
+- **CL2-2**: `escLoadSeq_` token on the Escalations list (filter-switch races).
+- **CL2-3**: `reportSwrPaint_` calls `repaintFn(data,{swr:true})`; Insights + Inbound renderers skip `loadAbandonHeatmap_` on the SWR pre-paint (live pass fetches once; fail-fallback still fetches); per-container `heatLoadSeq_` token in the heatmap loader.
+- **CL2-4**: `qcdAllDeptReqSeq_` token on the all-departments QCD report (preset changes re-run immediately -> overlap).
+- **CL2-6**: guided-tour Reports step copy updated (was listing retired Performance/Compare/QCD + the retired Missed modal).
+- **CL1-9**: IR + Insights "Last 30 days" presets are now 30 days ENDING YESTERDAY (was 31 days ending today) -- matches the main-page chip, the Overview launcher window, and CacheWarm. Inbound/Direct/qcdAllDept last30 presets deliberately untouched (different reports' semantics; noted as follow-on).
+- **CL2-7**: Insights prefs key is per-user (`insPrefsKey_()` = `cdr.ins.prefs.v2:<email>`, the reportLastGoodKey_ pattern) because the blob stores the agent selection; bare-key blobs are orphans (one-time prefs reset per user, deliberate).
+- Docs: CLAUDE.md per-report-prefs bullet (per-user ins key) + Report-SWR bullet (onError keep-last-good, repaintFn opts, heatmap skip).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions; no cache bumps. Post-deploy smoke: S23 (Overview), S37 (Insights incl. launcher chip with a forced roster error if practical), S4 (missed deep-link scroll), S32 (all-dept QCD preset switching).
+FOLLOW-ON (not in scope): CL1-7/CL1-8 (from the audit); Inbound/Direct/qcdAllDept last30 presets still end today; IR prefs key (cdr.ir.prefs.v1) not per-user (stores no agent selection -- lower stakes).
+Where I left off: Batch D committed+pushed, PR + merge on CI green per the established flow. Remaining scan work: Batch E (owner rulings: REP-3, RPT-8, IMP-12), Batch F (polish). Operator backlog unchanged: backfillDQEHistoryUpsert() to heal the 12/30/1899 Neon slots then re-run parity for 05-18..05-22; backfillInboundCallsForce() after the cdr-import deploy (TIME-SENSITIVE); deploys.
+
+### Latest session (broad-implement: IMP-4 -- phone-child corrections propagate)
+Branch `claude/broad-scan-d60m5l`, 280/280 tests (1 added), INV-16 guard green. Owner asked "should we address IMP-4 before merging?" -- yes (same neonWrite.js pair already queued for deploy; completes the corrections-propagate story IMP-5 started; per-parent replace is safe on EVERY caller unlike date-level).
+- **IMP-4** (both neonWrite.js copies): cdrInsertPhoneChildRows_ now DELETEs the looked-up parents' call_history_phones rows (chunked 500 ids/statement, same child transaction) before the inline inserts -- corrected duration_sec/occurrences propagate on force re-import and REMOVED entries no longer linger as phantoms. The zero-entries early-return COMMITS the delete (a re-import that emptied every list: the delete IS the correction). ON CONFLICT DO NOTHING kept as intra-payload dup guard only. Per-parent (not per-date) replace: each payload row carries its parent's COMPLETE entry set, so partial-DATE bulk batches are safe. Documented edge: an all-lists-empty payload never reaches the helper (hasAnyPhones gate) -- stale children would persist; practically unreachable. neonbackfill.js::backfillCDRHistory child path DELIBERATELY left fill-only (its documented design).
+- Test: neon-write-chunking IMP-4 (id-serving fake conn; delete-before-insert sequence, both parents incl. the now-empty one, DO NOTHING retained, 2 commits). Docs: architecture.md "phone child rows stay DO NOTHING" corrected; CLAUDE.md Neon-write-discipline rule (4) extended.
+DEPLOY: rides the already-pending cdr-import + cdr-report deploys (no new subsystems).
+Where I left off: owner pausing to merge + deploy + test. Post-deploy sequence: backfillInboundCalls (TIME-SENSITIVE, IMP-1) -> Neon-flip runbook (Batch B entry above). Remaining scan work: Batch D (client races), Batch E (owner rulings: REP-3, RPT-8, IMP-12), Batch F (polish).
+
+### Latest session (broad-implement: Batch B -- Neon-flip prerequisites)
+Branch `claude/broad-scan-d60m5l`, 279/279 tests (5 added/updated: IMP-5 authoritative-replace + REP-2 lookup-chunking in neon-write-chunking, IMP-11 in neon-mirror-tail, CORE-2 in dal-cutover, direct-call-backfill DELETE+upsert; CDR chunk test re-pinned at 300), INV-16 guard green. NO cache-version bumps (CORE-3 adds a SOURCE SUFFIX to summary:/individual_active: keys -- the latestDate pattern, one-time cold read per key on deploy).
+- **IMP-5 (authoritative per-date replace)**: writeDQERowsToNeon/writeQCDRowsToNeon take `{authoritative:true}` -> DELETE the payload's distinct dates in the SAME txn before inserting (helpers neonDistinctIsoDates_/neonAuthoritativeDateDelete_). Opted in: daily DQE build + dup-guard re-mirror (both INV-16 copies), daily QCD mirror (autoImport), deferred per-date mirrors (NeonMirror). Deliberately NOT: bulk-archive QCD (post-dedupeAlreadyArchived_ can be a PARTIAL date -- commented at the call site) + all row-batched backfills. Daily Direct writer (writeDirectCallRowsToNeon_) deletes its date likewise; dcUpsertRows_/backfill untouched. Phantom-row divergence (the Neon-flip correctness blocker) is closed for dqe_history/qcd_history/direct_call_history going forward; EXISTING phantoms need one force re-import of the affected date (or the runbook below). inbound_calls + call_history_dept deliberately excluded (no-sheet-primary risk / FK children) -- noted as follow-on.
+- **CORE-2**: computeActiveAgentsInRange_ applies the F-35 pattern (sheet hard-required only when it IS the source; Neon path survives a trimmed sheet; neon-fail + no-sheet -> clean empty).
+- **CORE-3**: summary: + individual_active: cache keys suffixed with the active DQE read source.
+- **IMP-3**: CDR_CHUNK_ROWS 500->300 (~27KB/chunk vs the measured ~44KB JDBC cap). **REP-2**: cdrInsertPhoneChildRows_ parent-id lookup chunked at 400 rows/query (was ONE statement over the whole rows array -- blew the cap ~2,900 rows on the F-18 bulk mirror), idMap merged across chunks; serves both the inline path and mirrorCdrPhonesToNeon.
+- **IMP-11**: backfillInboundCalls returns sheetsFound; mirrorInboundForDate_ HARD-fails a queued date whose Call_Legs sheet was pruned (composes with the IMP-6 cap -> one final gave-up email) instead of silently dequeuing an unrecoverable loss.
+- Docs synced: Neon-write-discipline rule (4) authoritative replace; INV-30 summary/individual_active source-suffix notes; Op State #19 (CORE-2) + #22 (IMP-11).
+- **OPERATOR (the flip runbook, now unblocked)**: (1) deploy cdr-import + cdr-report + dashboard; (2) run backfillDQEHistoryUpsert() once (refreshes stale rows; does NOT remove pre-existing phantoms -- if the parity gate reports missing-in-sheet rows, force re-import those dates or delete them in SQL); (3) run runDqeParityCheck until PARITY CLEAN incl. missing-in-neon=0 AND missing-in-sheet=0; (4) flip DQE_READ_SOURCE=neon; (5) watch the Neon read-back health line + [dqe-read] timings; revert by clearing the property.
+DEPLOY: cdr-import (neonWrite, buildDQE, autoImport, NeonMirror, inboundCalls, directCallMetrics) + cdr-report (neonWrite, buildDQE -- INV-16 sync) + Department Dashboard (Util.gs, Data.gs).
+REMAINING from the scan: Batch D (client races), Batch E (owner-gated accuracy), Batch F (polish). IMP-4 (phone children DO NOTHING) and inbound/CDR authoritative replace remain the known Neon-consistency leftovers.
+Where I left off: Batches A+B+C + the first fix batch + sync-docs all committed+pushed; operator backlog: merge PR, four deploys, web-editor deletions, TIME-SENSITIVE backfillInboundCalls (IMP-1), then the flip runbook above.
+
+### Latest session (broad-implement: Batch A truthful-alarms + Batch C auth hygiene)
+Branch `claude/broad-scan-d60m5l`, 275/275 tests (9 added: ingest-watchdog.test.js NEW x4, escalations NEO-2, missed-report CORE-1, util CORE-7, insights RPT-3, dept-config-neon CORE-5), INV-16 guard green. NO cache bumps (RPT-3 is caching POLICY, not a shape change). Harness: formatDate shim gained the 'u' (ISO dow) token the weekend/holiday gates use.
+- **Batch A**: OPS-1 watchdog episode flag arms only on a CONFIRMED send (notifyIngestStale_ returns bool; LAST_RESULT honest on failure); OPS-7 watchdog skips company-holiday runs + credits 24h/non-business day in the stale gap (ingestWatchdogNonBusinessCredit_, 14-day cap); RPT-3 Insights skips the cache put when queueHealth={error:true}; CORE-5 compareDeptConfigSources returns clean:false+error on unreachable Neon (F-5 parity with Alert/Digest gates); NEO-3 read-health recording is opt-IN ({recordReadHealth:true}, the 3 DQE readers only) -- the 9 non-DQE recordNeonReadFailure_ call sites removed (Inbound x5, CallerLookup, Alerts/Digest/DeptConfig config readers); OPS-8 Health outcome classifier is ok-prefix-aware (no false amber on "ok (... skipped on budget)").
+- **Batch C**: NEO-2 updateEscalationComment requires non-empty text + is worklist-only (pending_review/rejected refused), resolve preserves stored comments via COALESCE; CORE-1/DEEP-1 signed-in gate landed on getLatestDataDate(s) (the phantom F-28); NEO-4 Caller Lookup subquery is ORDER BY call_date DESC, call_start DESC NULLS LAST before LIMIT (truncation keeps newest); CORE-7 Util.gs sheetSafeCell_ neutralizes formula-leading cells at the OrphanFix log/alias/roster-add, DeptConfig notes+inboundAliases, and Auth notes write sites; NEO-5 getInboundInsurerDaily gained the unmapped-dept short-circuit; NEO-6 directCallResolveRequest_ mirrors inbound's manager-first/'ALL' ordering.
+- Docs synced in-batch: Op State #20/#23/#25, Key Design Decision auth note, INV-30 insights RPT-3 note, INV-55 NEO-1/NEO-2 semantics, KeepWarm F29 comment.
+- BEHAVIOR NOTES: (1) watchdog now alerts up to 24h/non-business-day LATER on real outages spanning weekends/holidays -- deliberate false-alarm trade; (2) client "Save comment only" with an empty box now errors visibly ("A comment is required.") instead of silently NULLing the comment; (3) DQE read-back health line no longer reflects non-DQE Neon outages (those surface in their own reports' unavailable states).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions; no cache bumps.
+REMAINING from the scan: Batch B (Neon-flip prereqs: IMP-5, CORE-2, CORE-3, IMP-3/REP-2, IMP-11) is next by priority; then Batch D (client races), Batch E (owner-gated accuracy: REP-3, RPT-8, IMP-12, IMP-8, IMP-2, IMP-10, RPT-6/7), Batch F (polish incl. OPS-2 alerts/digest lock contention).
+Where I left off: Batches A+C committed+pushed on top of the audit-fix + sync-docs commits; operator backlog unchanged (merge PR, 3 deploys, web-editor deletions, TIME-SENSITIVE backfillInboundCalls for IMP-1).
+
+### Latest session (broad-scan #2 + broad-implement: IMP-1, NEO-1, RPT-1/2, IMP-7, IMP-6)
+Branch `claude/broad-scan-d60m5l`, 266/266 tests (8 added: missed-report.test.js NEW ×4, inbound-calls IMP-1, pipeline-build IMP-7, neon-write-chunking IMP-6, escalations NEO-1), INV-16 guard green. ONE cache bump synced everywhere (test-enforced): missed v13->v14.
+- **Full 3-stage broad-scan ran first** (9 parallel deep-read audits, ~85 findings, all top findings source-verified). Report delivered in-session; the five below were owner-selected. NOT implemented (notable, awaiting selection): RPT-3 (Insights caches queueHealth {error:true} 30 min), OPS-1 (watchdog marks episode alerted on failed email), CORE-5 (compareDeptConfigSources false PARITY CLEAN on Neon-down + empty sheet), CL1-1 (Overview stale-response/View-as leak, #ov-company-aggregate lacks data-admin-only), CL2-1 (shared reportReqSeq: Insights->IR drill strands stale data), NEO-2/3/4, IMP-2/3/5/8/10/11/12, REP-1/2/3, OPS-2/3, DEEP-1 (F-28's "signed-in gate on getLatestDataDate(s)" was claimed in commit 22c5fd7's message but NEVER implemented -- fix ledger drift), + doc contradictions (INV-53/S6 say scope='both', code is 'roster'; Op State #20/#25/#19 claims; known-issues "Backup CSR happens to match"; QCD avgAnswer weighted vs doc day-mean).
+- **IMP-1** (cdr-import/inboundCalls.js): icIsQueueName_ now matches `Backup CSR` (case-insens, exact) alongside /^A_Q_/ -- abandons on Backup CSR were captured abandon_stage='ivr' / entry_queue=NULL, permanently (Call_Legs prune ~14d). OPERATOR: run `backfillInboundCalls` ASAP to re-capture the last ~14 days' mis-classified rows (ON CONFLICT DO UPDATE refreshes them); older rows are unrecoverable.
+- **NEO-1** (Escalations.gs): resolveEscalation guard is now status!==pending (was not-resolved-only) -- pending_review can no longer bypass approveEscalation, rejected can no longer be walked back via resolve->reopen. Client already only offered Resolve on pending cards; INV-55's "PENDING-ONLY (F-43)" claim is now true.
+- **RPT-1/2** (MissedCallsReport.gs, missed:v14): AD/AF classification + unique-abandoned collection moved ABOVE the zero-slot early-continue (slot-less F-2 rows count; lost-detail flag fires on them); AF<->AD pairing is a per-time-key FIFO (duplicate seconds keep distinct parent ids on journey drills; one AF entry flags at most one ring). Docs synced (INV-30 + 3 version tables).
+- **IMP-7** (buildDQEHistoricalData.js BOTH copies): the F2 expectedDate-mismatch guard now THROWS after logging its buildDQE failure row -- daily caller catch emails notifyDqeBuildFailure_ + logs :DQE failure (was: silent return under a success-rows:0 row with the force-deleted date left missing); bulk catch logs + continues. CLAUDE.md INV-16 text synced.
+- **IMP-6** (neonWrite.js BOTH copies + directCallMetrics.js + NeonMirror.js): (a) neonDedupeByKey_ last-write-wins dedupe on each writer's conflict key (DQE date+agent, QCD date+queue+source, CDR date+dept+agent, Direct date+dept+agent) so sheet-derived duplicate rows can't throw "cannot affect row a second time"; (b) deferred-mirror queue gains an Attempts col (4th; pre-existing 3-col tabs fine, blank=0) + NEON_MIRROR_MAX_ATTEMPTS (default 8, property-tunable) -- HARD-error dates park with a `neonMirror:gave-up` failure row + ONE final email; unreachable still retries forever. CLAUDE.md INV-44 + Op State #22 synced.
+DEPLOY: Department Dashboard (Escalations.gs, MissedCallsReport.gs) + cdr-import (inboundCalls, buildDQE, neonWrite, directCallMetrics, NeonMirror) + cdr-report (buildDQE, neonWrite -- INV-16 sync). dqe-report untouched.
+OPERATOR: (1) backfillInboundCalls after the cdr-import deploy (IMP-1 heal, time-boxed by Call_Legs retention -- do it FIRST); (2) missed:v14 self-heals via TTL.
+Where I left off: this batch committed+pushed on top of the 48 unmerged consolidation commits; the rest of the broad-scan findings await owner selection (Top remaining by impact: RPT-3, OPS-1, CORE-5, CL1-1/CL2-1 client-race batch, IMP-5 Neon reconcile-before-flip, DEEP-1 process rule).
+
+### Latest session (CR RETIREMENT -- consolidation complete)
+Branch `claude/broad-scan-xkmoam`, 258/258 tests, INV-16 guard green. Individual + Insights are now the two agent reports.
+- **Pre-retirement ports (so nothing remained to confirm):** (1) `insDeltaBadge_` gained an optional prior-value hover tooltip -- every Insights card delta badge shows the prior window's exact value (CR showed P1 explicitly); (2) the cards Chart view gained a THIRD basis, **vs Prior** (`insRenderCardsChartPrior_`: grouped current-vs-prior bars per agent for the selected metric, IR drill on click) -- CR's only remaining unique visual. Metric selector now applies to gap + prior (hidden only in Absolute).
+- **Compare Ranges RETIRED** (the PR/QCD playbook): CompareRangesReport.gs deleted (nothing else consumed its compute); script.html CR region deleted (~1,450 lines) with the four SHARED helpers re-homed to a "Shared delta/duration helpers (ex-Compare Ranges)" block (`crFormatSecondsShort_`, `deltaImprovementScore_`, `deltaClassify_`, `deltaIsQuiet_` -- Insights consumes all four); crHeadline_ deleted; ROUTES_ '/report/compare' -> insights modal (buttonId repoint mechanism from the PR session); SHARE_STATE_ provider + date-link pairs + init call removed; dashboard.html Compare button/modal/help topic removed, Insights help documents the absorption. KEPT: cr-vs-team / cr-quiet-* / pr-kpi-row CSS (Insights uses them). NOT carried over (deliberate): floater cards -- Insights is roster-only (v15); IR still surfaces floaters.
+- Tests: compare-ranges.test.js deleted (countWorkingDays_/INV-35 covered by util.test.js + insights-report.test.js); cache-version-sync 'compareRanges' SPECS row retired; docs tables -> RETIRED rows; CLAUDE.md swept (consolidation bullet, INV-30/31/32/35/36, S17/S27 retired, S18/S19 rewritten around Insights, report lists).
+OPERATOR (INV-17): delete CompareRangesReport.gs AND PerformanceReport.gs in the Apps Script WEB EDITOR after deploy. Orphaned localStorage: cdr.cr.prefs.v1, cdr.pr.prefs.v1.
+Where I left off: commit+push, then /sync-docs apply, then PR + merge on CI green (owner-directed).
+
+### Latest session (Absolute toggle + PR RETIREMENT + IR hover-prefetch)
+Branch `claude/broad-scan-xkmoam`, 262/262 tests (performance-report.test.js deleted; parity test reworked into the consolidation FREEZE), INV-16 guard green.
+- **A: Absolute sub-toggle** on the Insights per-agent Chart view (`#ins-cards-chart-mode`, 'gap'|'abs' in `insCardsChartMode`, persisted in cdr.ins.prefs.v2 -- additive key, no version bump): 'abs' renders PR's Volume & Efficiency view (`insRenderCardsChartAbs_`: stacked Answered+Missed per agent + % Answered dots on y1, datalabels honor the report toggle, bar click drills to IR); metric selector is gap-only.
+- **C: IR hover-prefetch** (initInsightsReport): ~300ms rest on an `.ins-card` fires getIndividualReport with the drill's EXACT request shape ({department, from, to, agents:[name]} -- field order matters for reportSig_) and writes reportLastGoodWrite_('ir', sig, data), so the click-drill SWR-paints instantly. Guards: mouseout cancels, one fetch per sig per session, skip when store already warm. TRADE-OFFS (documented in CLAUDE.md): prefetches count in Report Usage telemetry (sig must match, no marker possible) and overwrite the one-entry IR last-good slot.
+- **B: Performance Report RETIRED** (PR->Insights consolidation, the QCD playbook): PerformanceReport.gs DELETED (`deltaBlock_` MOVED to Util.gs -- Insights consumes it, CR mirrors the shape); script.html PR region (~1,240 lines: initPerformanceReport..prEmailImage_, prHeadline_, SHARE_STATE_ provider, date-link pairs, init call) deleted; dashboard.html menu button + #performance-modal + help topic removed (Insights help mentions the absorption); ROUTES_ '/report/performance' -> insights modal. **Router fix found in-scope: retired-route modal repoints ('/report/qcd' AND now '/report/performance') never actually dispatched on deep links** (no [data-route] element carries the legacy route so querySelector missed and the handler returned) -- the no-trigger branch now resolves kind:'modal' defs via def.buttonId (admin-gated), fixing the pre-existing qcd gap too. pr-* CSS classes are SHARED with Insights/CR/Inbound/Direct (pr-delta, pr-kpi-row, pr-trend-subtab) -- kept; dead .pr-agent-table/.pr-subset-hint CSS left (harmless, precedent). Tests: performance-report.test.js deleted; insights parity test -> consolidation-freeze literals (INV-25 weighted ATT 160s/'0:02:40', INV-28 window 03-02..03-08, INV-29 13 buckets, roster gate; trend asserts by INDEX not label text -- shim formatDate has a TZ off-by-one artifact on label strings); digest-insights.test.js load list fixed; cache-version-sync 'performance' SPECS row retired. Docs: CLAUDE.md (PR gotcha bullet rewritten as retirement, INV-25/28/29/30/31/36 + S14 (now the Insights absorbed-views scenario)/S16/S26/S37 + SWR/headline/datalabels/share-state/prefs/cutover lists), doc tables in known-issues/conventions/architecture -> RETIRED rows.
+OPERATOR (INV-17): delete PerformanceReport.gs in the Apps Script WEB EDITOR after deploy -- clasp push does not remove remote files. cdr.pr.prefs.v1 localStorage key is an orphan.
+DEPLOY: Department Dashboard only. Post-deploy smoke: S14 (Insights absorbed views incl. Absolute toggle + #/report/performance deep link), hover-prefetch (hover card ~1s then drill -> instant paint), #/report/qcd deep link (now actually works).
+Where I left off: commit+push this session; ~35 unmerged commits awaiting PR/merge + the four deploys. CR retirement remains the last consolidation candidate (needs Report Usage evidence).
+
+### Latest session (drilldowns #1-#4: heatmap cell, violation dates, trend point, agent row)
+Branch `claude/broad-scan-xkmoam`, 265/265 tests (6 added), INV-16 guard green. NO cache-version changes (new endpoint uncached; #2/#3 client-only).
+- **#1 heatmap cell drill**: `getInboundHeatmapCell` (InboundReport.gs) -- same auth (admin-only vetting gate via inboundResolveRequest_) + dept predicate + TZ/window/slot math as getInboundHeatmap, disposition='abandoned' only, capped INBOUND_HEATMAP_CELL_MAX=200 (meta.truncated), UNCACHED, no caller identity. Client: cells with abandons get `.ds-heatmap__cell--drill` (click/Enter/Space; stale-guard by panel data-cell key) -> `.ds-heatmap-detail` panel listing date/CST time/entry→final/stage/wait+hold, each with the existing "↳ path" `.pid-journey` -> getCallJourney. Pinned by tests/unit/heatmap-cell-drill.test.js (6 tests; isIsoDate_ stubbed -- it lives in Data.gs).
+- **#2 violation-date drill** (client-only): Insights Queue health violation dates render as `.ins-viol-date` chips; click -> `insJumpToDailyRow_` opens the collapsed Daily breakdown <details>, scrolls to + flashes (`.ins-daily-hit`) the day's row (daily rows now carry data-date via qcdDailyRowsHtml_ -- both modes, harmless for the all-dept modal).
+- **#3 trend-point drill** (client-only): clicking a data point on any tab of the consolidated Insights trend chart re-runs Insights for that month (Monthly) or day (Daily) -- `insTrendPointDrill_` requires an actual point hit (intersect:true, the Overview-chart convention), skips the 5% threshold line + no-op when already that window, syncs form dates (agents + compare kept), runs through runInsReport (SWR/D1b). 'MMM, yy' monthly labels parsed client-side; team-daily 'MM-DD' labels re-derive year from meta.from/to. Tooltip footer advertises the drill.
+- **#4 agent-row IR drill**: ALREADY IMPLEMENTED (tr[data-agent] + delegated agents-tbody click -> irDrillToAgent_ with page From/To, cursor+hover+title all present) -- verified, no change. My drilldown gap list overstated this one.
+QUEUED NEXT (owner-approved, not yet built): (A) Insights cards-Chart "Gap vs team ⇄ Absolute" sub-toggle, THEN retire the Performance Report (its share pie + all data are already in Insights; the absolute stacked-volume view is the last visual); (B) IR hover-prefetch -- on ~300ms agent-card hover in Insights, fire getIndividualReport in the background + write the D1b keep-last-good store under the drill's exact signature so the drill SWR-paints instantly (do NOT blanket-preload all agents -- quota + contention).
+DEPLOY: Department Dashboard only. Post-deploy smoke: heatmap cell click (admin, Insights or Inbound), violation-date chip jump, trend point click, S37/S38 unaffected paths.
+Where I left off: commit+push this session; ~33 unmerged commits awaiting PR/merge + the four deploys.
+
+### Latest session (UX consolidation: Insights edit popover + IR back-button + Missed-modal retirement)
+Branch `claude/broad-scan-xkmoam`, 259/259 tests, INV-16 guard green. Client-only (script.html/dashboard.html) + CLAUDE.md sync; NO server/cache changes (`getMissedCallsReport` + `missed:v13` untouched -- the dept section still consumes them).
+- **Missed Calls modal RETIRED** (owner directive: "available in its entirety on the My Department page"). Deleted: the Reports-menu Missed button, `#missed-modal` markup, `initMissedReport`/`renderMissedReport`/`renderMissedChart`/`renderQueueOnly`/`renderMissedAgents`/`clearMissedChart`/`setMissedStatus`, the modal's bucket-detail instance, the dept section's "Full report" button, the dead `missed-from/to` + `qcd-from/to` date-link pairs. KEPT (all shared builders): `missedHeadline_`, `missedChartCfg_`/bars/radar + `cdr.missed.chartmode`, `makeMissedBucketDetail_` (one instance now), `missedQueueOnlyParts_`, `missedAgentsHtml_`, journey drill. Routing: `'/report/missed'` is now `{ kind:'page', page:'dept', scrollTo:'dept-missed-section' }`; the deep-link reader dispatches tab-less page routes directly (setPage + refresh) and arms the one-shot `deptMissedScrollPending_` flag, consumed in `deptMissedRender_` after the section is revealed (scroll never races the fetch). `launcherOpenMissed_` rewritten: sets page dates to latest DQE date, opens dept page, arms the scroll. Nuance vs the modal: the modal had its OWN from/to; the section follows the page From/To (help text updated to say so).
+- **Insights in-results edit popover** (`#ins-edit-popover`, mirrors IR's): dates + compare + agent list editable from the results header. Insights semantics: Apply allows EMPTY selection (= whole-dept agent-free run, INV-45; "Select none (whole department)"; Apply never disabled; pre-checks `insLastRequestedAgents_` -- the REQUESTED list, not server-resolved meta.agents -- so agent-free stays agent-free); compare defaults to 'keep' sentinel (re-resolves via the MAIN form incl. un-representable custom priors). Apply syncs back into the form then reuses runInsReport() (SWR/D1b/stale-guard). New "Showing:" editing line via `insRenderEditingLine_` (agent-free renders "Whole department (N agents)").
+- **IR back-button de-confusion**: during an Insights drill the generic "« Back" (`ir-back-btn`) is HIDDEN (only "Back to Insights" shows); restored in closeModal's `irCameFromInsights_` branch. Individual tab de-starred + retitled (drill-down target framing).
+- ANSWERED (no build): PR share pie == Insights donut (`insRenderShareChart_` already the port -- earlier analysis corrected); Share-view proposal moot; CR CSV per-day port described (~1h, not authorized); PR's only unported visual = Volume & Efficiency stacked bars.
+DEPLOY: Department Dashboard only.
+Where I left off: commit+push this session's work; ~31 unmerged commits awaiting PR/merge + the four deploys.
+
+### Latest session (backup + health page)
+Branch `claude/broad-scan-xkmoam`, commit `c278feb`, PUSHED. 259/259 tests (6 added), INV-16 guard green. NEW OAUTH SCOPE: `auth/drive` in appsscript.json (one consent run after deploy, Operator State #9).
+- **NeonBackup.gs**: weekly Drive export of the NO-sheet-fallback tables. escalations = full JSONL snapshot/run (keep newest NEON_BACKUP_KEEP=8); escalation_activity + inbound_calls (incl. journeys) = monthly partition files, closed months immutable-skip, current month rewritten. string_agg(row_to_json) one-round-trip fetches (never per-row JDBC -- the 0.5s/row trap). Folder auto-created -> NEON_BACKUP_FOLDER_ID. Trigger: Saturdays NEON_BACKUP_HOUR=6. Admin install/uninstall/runNeonBackupNow; outcome -> NEON_BACKUP_LAST(_RESULT). Restore = psql/script over JSONL (documented in file header).
+- **SystemHealth.gs + #health-modal** (route #/admin/health, data-admin-only Health tab): live status table replacing memory-driven use of the 28-item checklist -- pipeline freshness, Neon conf/read-source/config-source/read-back/mirror, dashboard trigger presence (alerts/digests required=warn; warm/keepwarm/watchdog/backup optional=muted) + last outcomes, Script Property presence, setup()-sheet presence. Every probe individually try/caught -> its own warn row. Hosts the backup controls. NOTE: covers the DASHBOARD project only (cdr-import/cdr-report props+triggers are per-project-unreachable; rows say so).
+- Tests: system-health.test.js (backup pure helpers: nbNextMonth_/nbMonthsBetween_/nbSnapshotTrimList_; health admin gate + healthy/degraded shapes + probe-failure degradation). Shim: ScriptApp.everyWeeks/WeekDay added.
+DEPLOY: Department Dashboard only + the drive-scope consent (blocks the BACKUP feature, not the deploy). Post-deploy: open Health tab -> install backup trigger -> "Back up now" to seed.
+REMAINING strategic: S1(a) capture-normalization (post-vetting), S7 legacy decommission. Advisory list from the review session otherwise open (self-serve digests, escalation aging, anomaly alerts, mobile pass, Sonia canary, access-control case fix).
+Where I left off: 30 unmerged commits awaiting PR/merge + deploys.
+
+### Latest session (broad-implement: S6 Escalations Phase 2)
+Branch `claude/broad-scan-xkmoam`, commit `46c01b6`, PUSHED. 253/253 tests (5 added), INV-16 guard green. Escalations stays uncached by design -- no cache bumps.
+- **Status model**: `pending_review` -> (`pending` <-> `resolved`) | `rejected` (terminal). getEscalations accepts all four + 'all'; meta gains viewer-scoped `pendingReviewCount`.
+- **INSERT contract for the external team-tools app** documented at the top of Escalations.gs: INSERT (id, department, occurred_at, caller, patient_name, trx, area, reason, status='pending_review', created_by, source='team-tools') directly into Neon `escalations`; NEVER write escalation_activity; NEVER UPDATE after insert (corrections = reject + resubmit). The dashboard treats these rows as UNTRUSTED at the review boundary.
+- **approveEscalation** (pending_review-only): re-normalizes fields (escNormalizeReviewFields_/escClean_, ESC_MAX_TEXT caps), refuses empty-reason rows, promotes to `pending`, 'approved' activity row atomically. **rejectEscalation**: required reason -> trail, status `rejected`, data retained. Both: escAssertRowAccess_ on the ROW's dept + LockService + txn + Logger (full INV-55 mitigation set). A typo'd dept from the external app is reviewable by ADMINS (escAssertRowAccess_ admin-passes any stored dept).
+- **Client**: "Needs review" accent pill + `via team-tools · submitter` provenance tag, Approve/Reject (reason-gated) card actions, clickable "N awaiting review" toolbar chip (any filter -> review queue), new dropdown options (Needs review / Rejected), review-aware empty states. No notification on external insert (dashboard can't observe Neon inserts) -- the chip is the pull signal; push is the external app's job if wanted (noted in contract).
+- Tests: fake-JDBC reviewConn in escalations-hardening.test.js (promotion+normalization+atomicity, gates write nothing on refusal, reject semantics, pure normalizer); harness shim gained deterministic Utilities.getUuid.
+DEPLOY: Department Dashboard only. EXTERNAL DEPENDENCY: the team-tools app must implement the INSERT contract (Escalations.gs header) -- until then the review queue is simply empty (chip hidden, zero behavioral change).
+REMAINING strategic: S1(a) capture-normalization (post-vetting), S7 legacy decommission (F-25 stub awaiting dqe-report deploy; F-59/F-60 deletion-order cautions). Everything else from the scan is done.
+Where I left off: 28 unmerged commits awaiting PR/merge + the four deploys.
+
+### Latest session (broad-implement: S3/F-20 tail-scan + S5 holidays)
+Branch `claude/broad-scan-xkmoam`, commit `f300ba9`, PUSHED. 248/248 tests (9 added), INV-16 guard green. NO cache bumps (S5 unset-property = byte-identical, the INV-54 precedent; S3 is read-path perf only).
+- **S3/F-20** (cdr-import/NeonMirror.js): `nmReadDateRowsTail_` bounded tail-scan replaces the full-sheet read in mirrorCdrForDate_/mirrorQcdForDate_/mirrorDqeForDate_ -- bottom `NEON_MIRROR_TAIL_ROWS` (=3000, Script-Property-tunable) rows, widen x4 to full when date absent OR window-top row matches (block clipped); accepts only complete blocks -> row-identical to full scan. Old dates fall back to full read. Pinned by neon-mirror-tail.test.js (5 tests). This was the "do before enabling NEON_MIRROR_MODE=deferred long-term" prerequisite -- deferred mode is now safe to adopt (Operator State #22).
+- **S5 holidays** (dashboard): `COMPANY_HOLIDAYS` Script Property (Skip-Dates grammar) -> Util.gs holiday layer (`getCompanyHolidayRanges_`/`isCompanyHoliday_`/`prevBusinessDayIso_`; `parseSkipDateRanges_`/`isDateInSkipRanges_` MOVED from Alerts.gs). Wired: countWorkingDays_ (INV-35, CR+Insights server flag), client `workingDaysBetween_` via injected `window.__COMPANY_HOLIDAYS__` (Code.gs/dashboard.html -- hint + flag can't disagree), runDailyAlerts_/runDailyDigests_ holiday-run skips (trigger-only) + shared prev-business-day walk-back (Tuesday-after-Monday-holiday covers Friday; alerts and digest use ONE walker). NOT touched (deliberate): computePriorWindow_/INV-28 window selection, WoW chips, digest weekly/monthly windows -- window SELECTION stays calendar-based; only counting/skipping is holiday-aware.
+- OPERATOR: set `COMPANY_HOLIDAYS` (dashboard Script Property) with this year's dates to activate; maintain yearly. Nothing changes until set.
+DEPLOY: Department Dashboard (Util/Alerts/Digest/Code.gs, dashboard.html, script.html) + cdr-import (NeonMirror.js).
+REMAINING strategic: S1(a) capture-normalization (post-vetting), S6 Escalations Phase 2, S7 legacy decommission. All other scan items done.
+Where I left off: 26 unmerged commits awaiting PR/merge + deploys (dashboard, cdr-report B1-3, cdr-import B1-3+S3, dqe-report F-25 stub).
+
+### Latest session (perceived-speed: report SWR + Insights warm keys)
+Branch `claude/broad-scan-xkmoam`, commit `05e4a65`, PUSHED. 239/239 tests, INV-16 guard green. Client + CacheWarm only; no cache-version bumps (no payload shapes changed).
+- **Report SWR layer** (script.html, `reportSwrPaint_` riding the D1b localStorage keep-last-good store): a repeat Generate whose `reportSig_` matches the stored payload paints INSTANTLY with a visible `status-loading` note "Showing your previous result for this exact selection (from <time>) — refreshing now…"; live fetch always continues -- success repaints + clears the note (every wired repaint path resets its results-status), failure swaps it for the D1b warn. Wired: IR, PR, CR (main Generate; edit-popover keeps its own refreshing status), Inbound, Insights (ALSO gained the D1b store/fail-fallback itself), My Department table (`onData(data,{swr:true})` skips deptMissedFetch_ on the stale paint so the missed section isn't double-fetched). Overview untouched (already had SWR + ovSetCachedIndicator_). CLAUDE.md gained an SWR gotcha bullet with the indicator contract + wiring rule for new reports.
+- **Warm more keys** (CacheWarm.gs): warmReportCaches_ now also warms each dept's AGENT-FREE Insights over the launcher window (last 30 days ending yesterday -- the exact request both Overview chips auto-run), LAST, under a 4-min runtime budget (INSIGHTS_WARM_BUDGET_MS) so the ~6-min trigger kill can't truncate mid-warm; skipped count logged + in the outcome line. Operator State #21 + header synced.
+- OPERATOR: warming trigger must be installed (Alerts modal) for any warm to run; watch CACHE_WARM_LAST_RESULT for "insights skipped on budget" -- if chronic, raise the hour spacing or accept partial.
+DEPLOY: Department Dashboard only.
+REMAINING perf ideas (not built): DQE_READ_SOURCE=neon flip (biggest lever, operator-gated), localStorage multi-signature SWR history (currently last-signature-only per report), Missed-report SWR (shared modal+dept-section render paths make it fiddly), prefetch-on-modal-open.
+Where I left off: 24 unmerged commits awaiting PR/merge + the four deploys.
+
+### Latest session (S1 option-C + performance levers)
+Branch `claude/broad-scan-xkmoam`, commit `0fcb426`, PUSHED. 239/239 tests (3 added), INV-16 guard green. No cache-version bumps (TTL/memo/discovery are not shape changes).
+- **S1(c) DONE (owner picked option c).** Dept Config modal gains "Discovered inbound queues": `scanInboundQueueNames_` (InboundReport.gs, Neon json_agg over entry_queue+final_queue, 180d, count(DISTINCT call_id)) -> `discoverInboundQueues_`/`classifyInboundQueues_` (DeptConfig.gs) attribute each raw name via `inboundQueuesForDept_` (the report's own scoping set); unattributed-first; explicit Neon-unavailable state. INV-54 synced. Option (a) full capture-normalization deferred until after the Inbound/Direct accuracy vetting.
+- **QCD sheet memo** (`QCD_SHEET_DATA_MEMO_`, per-execution): computeQcdReport_ reads the QCD sheet once per request -- the all-dept report drops from ~2 reads x N depts (~28) to 2; Insights Queue health 4 -> 2. Tests reset it per install (qcd-report, insights-report).
+- **All-dept report pre-warm (owner request)**: warmReportCaches_ additionally warms getQcdAllDepartments(yesterday,yesterday) -- the exact key the modal pre-loads -- GUARDED on getLatestDataDates().qcd >= yesterday (late ingest -> skip, never pins an empty blob); `qcdAll:` TTL raised to 6h (QCD_ALLDEPT_CACHE_TTL_SECONDS -- CacheService max; trade-off documented: mid-day force re-import corrections lag up to 6h there). CLAUDE.md tiers bullet + Operator State #21 synced.
+- OPERATOR: cache warming must be ENABLED for the pre-warm to run (Alerts modal -> Report cache warming -> install trigger; "Warm now" to prime immediately). Biggest remaining perf lever = DQE_READ_SOURCE=neon flip (parity gate first, Operator State #19).
+DEPLOY: Department Dashboard only.
+REMAINING strategic: S1(a) capture-normalization (post-vetting), S3 F-20 tail-scan, S5 holidays, S6 Escalations Phase 2, S7 legacy decommission.
+Where I left off: 22 unmerged commits awaiting PR/merge + deploys (dashboard; cdr-report + cdr-import Batches 1-3; dqe-report F-25 stub).
+
+### Latest session (broad-implement: S2 QCD retirement; S1 STOPPED for a design decision)
+Branch `claude/broad-scan-xkmoam`, commit `39af0a1`, PUSHED. 236/236 tests, INV-16 guard green. insights:v17->v18 (queueHealth.unmapped signal); the per-dept `qcd:` prefix RETIRED.
+- **S2 DONE (QCD->Insights consolidation).** Gap check ran first (owner request): the modal had 4 things Insights lacked -- violation-day chart markers, multi-queue legend spotlight, unmapped-dept hint + admin Dept Config CTA, own KPI layout/exports. First three CLOSED in Insights; fourth intentional (Insights has equivalent exports incl. CSV, which QCD lacked). Deleted: QCD tab, #qcd-modal, getQcdReport/getQcdReportInit/sendQcdReportEmail, ~780 lines of client code. KEPT: computeQcdReport_, getQcdAllDepartments (qcdAll:v3), queuesForDept_, both snapshots, the shared client builders (abandonForecastHtml_/qcdDailyRowsHtml_/qcdSourceSubtableHtml_/qcdDailyBarCell_/fmtViolDate_/insQhStatStrip_). #/report/qcd repoints to Insights; the Overview "abandons" chip opens Insights agent-free auto-run. Docs: INV-51 retirement banner, S32 rewritten, INV-30/31, help topics, version tables. Orphan localStorage key cdr.qcd.datalabels (harmless).
+- **S1 STOPPED (queue-identity normalization at capture) -- needs an owner design decision.** Finding: the Inbound Queue Aliases config maps raw names -> DEPT (a per-dept list), NOT raw-name -> canonical-queue-name, so "normalize at capture" is ambiguous for multi-queue depts (no stored pairing exists). Also: normalizing mid-vetting changes what inbound_calls stores (pre/post rows differ -- complicates the accuracy confirmation the owner wants FIRST), journey-JSON leg names would stay raw unless also normalized, and historical rows keep raw names regardless (the read-side alias UNION cannot retire without a backfill). Options for the owner: (a) new alias->canonical PAIRING config + normalize at capture + backfill; (b) normalize only the unambiguous cases (identity + single-queue depts); (c) SKIP normalization, instead add an unmapped-INBOUND-queue discovery surface (mirror of the QCD discovery in Dept Config) so vetting can find unattributed raw names -- lightest, serves the vetting directly. Recommendation: (c) now, revisit (a) after vetting.
+- Owner directive this session: Inbound + Direct reports STAY admin-gated until accuracy is confirmed (the un-gate half of S1 is off the table for now).
+DEPLOY: Department Dashboard only (QCDReport.gs, InsightsReport.gs, script.html, dashboard.html). insights v17 caches TTL out within 30 min.
+REMAINING strategic: S1 (awaiting the a/b/c decision above), S3 F-20 deferred-mirror tail-scan, S5 holidays, S6 Escalations Phase 2, S7 legacy decommission (F-25 stub awaiting dqe-report deploy).
+Where I left off: S2 shipped + pushed (20 unmerged commits total); S1 awaiting owner decision; deploys still pending (dashboard, cdr-report, cdr-import, dqe-report).
+
+### Latest session (broad-implement: Quick wins Q1-Q4 + S4/F-22)
+Branch `claude/broad-scan-xkmoam`, commit `515f54e`, PUSHED. 236/236 tests (9 added), INV-16 guard green. TWO cache bumps synced everywhere (test-enforced): summary v10->v11, individual v10->v11.
+- **Q4/F-29 follow-up (OWNER DECISION, ratified this session):** My Department totals-row ATT / Avg Abd Wait / CSR Avg Abd Wait means EXCLUDE zero rows (`avgNonzero_` in Data.gs) -- idle agents no longer drag the dept averages; the totals now use the SAME skip-zero method the per-agent accumulators use. conventions.md Totals-row spec updated. Managers will see totals-row means CHANGE (up) for ranges containing zero-value agents -- intended.
+- **Q3/F-32 follow-up:** IR carries `meta.priorOverlap` + renders the inline "Windows overlap" caveat (shared `insOverlapFlagHtml_`) when a custom prior overlaps the current range -- Insights/IR parity.
+- **Q2:** neon-write-mapping.test.js -- the LAST unit gap closed. neonWrite writers now pinned end-to-end (chunking + field mappings). Remaining manual: NeonMirror.js payload re-derivation only.
+- **Q1/F-25:** legacy sendManualAlert neutralized to a no-send stub (stale 13-manager hardcoded map; was fireable by any spreadsheet editor). Needs a dqe-report deploy to take effect (cleanup deploy, allowed under the freeze).
+- **S4/F-22:** renameHistoricalAgent_ re-verify-before-write guard -- aborts (no write, retry message) if the DQE sheet's row count or agent column changed between snapshot and write; the cross-project rename-vs-build race can no longer clobber. Mitigation, not serialization (documented in CLAUDE.md + known-issues §3). Pinned by orphan-rename-race.test.js (delete-shift + same-rowcount-cell-change + happy path).
+DEPLOY: Department Dashboard (Data.gs, IndividualReport.gs, OrphanFix.gs, script.html) + dqe-report (sendManualAlert stub; cleanup deploy). cdr projects untouched this session.
+REMAINING: strategic track only -- S1 queue normalization -> un-gate Inbound/Direct (next by priority), S2 QCD->Insights retirement, S3 F-20 deferred-mirror tail-scan, S5 holidays, S6 Escalations Phase 2, S7 legacy decommission (F-25 now done; F-59/F-60 deletion-order cautions remain).
+Where I left off: Batches 1-6 + quick-wins all shipped + pushed; branch has 19 unmerged commits awaiting PR/merge + deploys (dashboard; cdr-report + cdr-import from Batches 1-3; dqe-report for the F-25 stub).
+
+### Latest session (broad-implement: Batch 6 -- test debt, no production code changes)
+Branch `claude/broad-scan-xkmoam`, commit `c44c825`, PUSHED. 227/227 tests (3 added), INV-16 guard green. TEST-ONLY batch -- no deploy needed.
+- **Pass-4 sentinel producer** (pipeline-build.test.js): INV-23 producer side now pinned -- no-ring abandoned queue call -> ONE sentinel row (C=queue, D=exts, E-J zeros, CST slot at the QUEUE-hit leg's time, AD=no-ring parents only, AE='', AF=slots); a rung-abandoned parent stays on the agent row (no double count). Closes the audit's oldest coverage gap.
+- **qcd-report.test.js** (new): F-15 daily axis (sub-queue-only date on the axis; dept total zero-fills; child per-queue line keeps its numbers; subDept tag + own-only dept total asserted) + F-36 grand-total dedup (double-mapped queue counts once company-wide, listed under both dept sections). Dept Config fixture rows drive the parent/child + double-mapped setups -- the Batch-4 deferred follow-on, now done.
+- Coverage notes synced (CLAUDE.md Key Commands + Test Command blocks, tests/README.md): remaining unit gap is ONLY the neonWrite field mappings (chunking/commit pinned by neon-write-chunking.test.js since Batch 3).
+DEPLOY: none (tests + docs only; nothing ships to Apps Script).
+REMAINING from the scan: NOTHING in the fix batches -- Batches 1-6 complete. Strategic track only (queue-identity normalization -> un-gate Inbound/Direct, QCD->Insights retirement, F-20 deferred-mirror tail-scan, F-22 rename-vs-build race, holiday awareness, Escalations Phase 2, legacy decommission incl. F-25). Awaiting ratification: F-32 (IR overlap = current-wins) + F-29 (code-is-spec comment fix).
+Where I left off: all six batches shipped + pushed; branch has 17 unmerged commits awaiting PR/merge + deploys (dashboard: F-1..F-6 + Batches 1/4/5; cdr-report + cdr-import: Batches 1-3).
+
+### Latest session (broad-implement: Batch 5 -- Escalations hardening, F-43..F-46)
+Branch `claude/broad-scan-xkmoam`, commit `448ac45`, PUSHED. 224/224 tests (5 added: escalations-hardening.test.js -- first unit coverage of Escalations.gs), INV-16 guard green.
+- **F-45** `escAssertRowAccess_` replaces `assertDeptAccess_` at the 4 ROW-dept call sites (resolveEscalation / updateEscalationComment / reopenEscalation / getEscalationActivity): manager must match the row's STORED dept; admin passes unconditionally -- including rows whose stored dept was renamed/retired (assertDeptAccess_'s roster validation would have locked admins out, orphaning those rows unresolvable). Request-PARAM dept checks (getEscalations) keep assertDeptAccess_ -- input validates against real depts, row data doesn't.
+- **F-43** resolveEscalation is PENDING-ONLY (reads escRowMeta_, throws "already resolved... Reopen it first" on a resolved row) -- a second resolve can no longer silently overwrite the first resolution note + resolved_by/at.
+- **F-44** escCleanDateTime_ anchored + per-field range checks (mo 1-12 / da 1-31 / hh<=23 / mi,se<=59); invalid -> '' (stored NULL) per the documented contract. Old unanchored regex let '2026-01-01T99:99' / trailing garbage reach Postgres's ::timestamptz cast (opaque "Could not save").
+- **F-46** getEscalations subquery capped at ESC_MAX_ROWS=500 newest (ORDER BY occurred_at DESC NULLS LAST) + meta.truncated; client escApplyFilter_ shows "showing the N most recent -- narrow by status or department" in the filter-count chip (the text filter only searches the rows that arrived).
+- INV-55 synced in CLAUDE.md (row gate, pending-only resolve, occurred_at validation, row cap).
+DEPLOY: Department Dashboard ONLY (`clasp push -f` + new version). No operator actions; no cache bumps (Escalations is uncached by design).
+REMAINING: Batch 6 residual (Pass-4 sentinel-row producer test; F-15/F-36 QCD fixtures), strategic track (queue normalization -> un-gate Inbound/Direct, QCD retirement, F-20, F-22, holidays, Escalations Phase 2, legacy decommission incl. F-25). Awaiting ratification: F-32 (IR overlap = current-wins) + F-29 (code-is-spec comment fix).
+Where I left off: Batches 1-5 all shipped + pushed; branch has 15 unmerged commits awaiting PR/merge + deploys (dashboard: F-1..F-6 + Batches 1/4/5; cdr-report + cdr-import: Batches 1-3).
+
+### Latest session (broad-implement: Batch 4 -- report-consistency sweep, 16 findings)
+Branch `claude/broad-scan-xkmoam`, commit `22c5fd7`, PUSHED. 219/219 tests (1 added), INV-16 guard green. SIX cache bumps synced everywhere (test-enforced): individual v9->v10, performance v4->v5, missed v12->v13, qcd v9->v10, qcdAll v2->v3, insights v16->v17.
+- **F-35** all 7 DQE readers (IR/PR/CR/Insights/Missed/Overview/computeSummary_) + deptQueueExtsForNeonReader_: sheet hard-required only on the SHEET path; neon path tolerates a trimmed/archived sheet (empty-shape fallback, never crash). getLatestDataDate was already correct. THE blocker for ever retiring the sheet.
+- **F-15/F-36/F-37** QCDReport: daily axis includes sub-queue-only dates (Insights inherits); all-dept grand total dedupes double-mapped queues (gSeenQueues); empty shape carries subQueuesSeparated/violationDates/subDept.
+- **F-32** IR custom-prior overlap -> current-wins else-if (DECISION: unified on PR/Insights' F12 semantics; test pins it). **F-31** IR/PR empty shapes roster-filtered. **F-34** abandonedRings agent-only. **F-48** inbound accepts 'ALL'. **F-49** digest lock-skip notifies admins. **F-28** assertAdmin_ on runDqeParityCheck/runHistoricalBackfillCheck + signed-in gate on getLatestDataDate(s). **F-29** totals-mean comment corrected (code = spec per conventions.md -- DECISION).
+- Client: **F-38** CR/Insights hints use workingDaysBetween_ (INV-35 parity); **F-39** modal drag/resize wire-once (handle re-wires per-creation -- resetModalTransform_ removes it); **F-40** ov mini-table stale token; **F-41** basePageRoute_ + escalations; **F-42** tour replay uses Help's real close; **F-47** "Last 30 assessed days" label + tooltip.
+DEPLOY: Department Dashboard ONLY (`clasp push -f` + new version). No operator actions; all six bumped caches self-heal.
+NOT unit-tested (fixture-heavy, noted as follow-on): F-15's sub-queue-date axis + F-36's dedup (need parent/child QCD fixtures); verify live via S32 (multi-queue dept daily chart) + the all-dept report with a deliberately double-mapped queue.
+REMAINING: Batch 5 (escalations F-43..F-46), Batch 6 residual (Pass-4 sentinel test), strategic track (queue normalization -> un-gate Inbound/Direct, QCD retirement, F-20, F-22, holidays, Escalations Phase 2, legacy decommission).
+Where I left off: Batch 4 shipped + pushed; branch has 13 unmerged commits awaiting PR/merge + the dashboard deploy (plus the two cdr deploys from Batches 2-3).
+
+### Latest session (broad-implement: Batch 3 -- F-7/F-17/F-18/F-21/F-55, bulk-path hardening)
+Branch `claude/broad-scan-xkmoam`, commit `f29160d`, PUSHED. 218/218 tests (4 added: neon-write-chunking.test.js, fake-conn), INV-16 guard green.
+- **F-7** processBatchArchive: QCD wait cols (9/10) + CDR ST duration cols (22/23) read from the already-parallel DISPLAY grid -- bulk-archived QCD rows no longer write "Sat Dec 30 1899..." garbage into Neon longest_wait/avg_answer. NOTE: PRE-fix garbage rows in qcd_history remain (no reader consumes longest_wait today); one-off SQL cleanup or a re-import of the date self-heals via DO UPDATE.
+- **F-17** processBulkQueue + standalone processBatchArchive take the script lock (per-invocation; released at pause boundaries; NOT re-entrant -> bulk passes callerHoldsLock=true). Tradeoff documented in-code: a daily INSERT_GRID during a bulk CHUNK skips with a console log (recover via Manual Processing); between chunks it runs normally.
+- **F-18** bulk archive mirrors CDR to Neon (writeCDRRowsToNeon, best-effort, QCD-mirror precedent, deduped rows); completion report gains the inbound_calls "not captured -- run backfillInboundCalls()" reminder.
+- **F-21** neonWrite.js (INV-16 pair): DQE/QCD/CDR-main INSERTs chunked (400/1000/500 rows) under the JDBC statement + 65,535-param caps; ONE commit per writer preserved. Fake-conn test pins chunks + single commit + unchanged daily single-statement path.
+- **F-55** processNewImport non-silent failure returns "ERROR: <msg>" (runManualExport suppresses the redundant second dialog); archive alert/audit/return show POST-dedup appended counts + explicit skipped count.
+DEPLOY: cdr-import (autoImport, neonWrite) + cdr-report (neonWrite -- INV-16 sync). Dashboard untouched.
+VALIDATE post-deploy: one small bulk run (2-3 dates) -- confirm lock busy-alert when a manual export races it, Neon CDR mirror lines in the log, post-dedup counts in the completion alert.
+REMAINING: Batch 4 (consistency Lows: F-15/F-28/F-29/F-31/F-32/F-34..F-49), Batch 5 (escalations F-43..F-46), Batch 6 (test debt F-58 -- partially started: chunking now covered), strategic track.
+Where I left off: Batch 3 shipped + pushed; branch has 11 unmerged commits awaiting PR/merge + the two cdr-project deploys.
+
+### Latest session (broad-implement: Batch 2 -- F-13/F-11/F-12/F-10/F-19/F-26/F-51/F-52, cdr-tooling data accuracy)
+Branch `claude/broad-scan-xkmoam`, commit `9af11e4`, PUSHED (stacks on F-1..F-6 + sync-docs + Batch 1). 214/214 tests (5 added), extended INV-16 guard green.
+- **F-13** DQEdrilldown: windows Unique/TTT/ATT (Bug 1/2 parity) + abandoned-leg wait (IVR parity) -- the verification tool agrees with the build again. Editor-tool; no unit harness (SpreadsheetApp-bound, like sheetRepairs).
+- **F-11** dashboardCDR Custom Report Builder: OB-Ext duration via parallel getDisplayValues (INV-02) -- +36:36 offset gone.
+- **F-12** emailDailyReport: NOON anchor replaces the DST-blind +1 day (winter PDFs were dated one day late); sheet-TZ coupling removed. Pinned by batch2-helpers.test.js.
+- **F-10** inboundCallsExport: ic_cellDateIso_ display-normalized delete + max-date detection. OPERATOR: one explicit full-range `exportInboundCalls('<earliest-affected>', '<today>')` heals the existing duplicated rows (known-issues runbook updated; F-10 status flipped to Fixed in CLAUDE.md + known-issues).
+- **F-19** autoImport + directCallMetrics roster reads: getLastColumn + first-blank-header stop (was hard-capped at 14 cols = current width). Test pins 16-dept grid + insurance-block exclusion.
+- **F-26** dcLogSamples_ masks phones to last-4 (dcMaskPhone_/dcMaskPhonesInText_); exts/call-ids kept.
+- **F-51** sanitizeSlotCellForNeon_ (NEW duplicated fn: neonbackfill.js + NeonMirror.js, guard-pinned) applied in both DQE backfills + deferred mirror + the INV-16 remirror (typeof-guarded saneSlot). Clean cells byte-identical; garbage -> NULL.
+- **F-52** slot-repair PREVIEW snapshots/restores original formats (dry run no longer flips displays to bare serials).
+DEPLOY: cdr-report (DQEdrilldown, dashboardCDR, emailDailyReport, inboundCallsExport, neonbackfill, sheetRepairs, buildDQE) + cdr-import (autoImport, directCallMetrics, NeonMirror, buildDQE). Dashboard NOT touched this batch.
+REMAINING: Batch 3 (bulk-path: F-7/F-17/F-18/F-21/F-55), Batch 4 (consistency Lows), Batch 5 (escalations F-43..F-46), Batch 6 (test debt F-58), strategic track.
+Where I left off: Batch 2 shipped + pushed; branch has 7 unmerged commits awaiting PR/merge + deploys (both cdr projects this batch).
+
+### Latest session (broad-implement: Batch 1 -- F-9/F-14/F-16/F-8/F-50/F-23/F-24/F-56/F-33/F-27/F-30/F-61/F-62 + alerts weekend)
+Branch `claude/broad-scan-xkmoam`, commit `ca60afd`, PUSHED (stacks on the F-1..F-6 batch `07fb4de` + sync-docs `e7afaf0`). 209/209 tests (4 added, 1 stale expectation fixed), INV-16 guard (now extended) green.
+- **F-9** QCD modal expand: wire-once guard (`tbody._qcdExpandWired`) -- S32 regression fixed.
+- **F-14** Overview "X viol MTD" chip: window filter no longer truncates MTD (`companyOverview:v17`->`v18` + docs synced; new `overview-qcd-snapshot.test.js`).
+- **F-16** remirrorExistingDqeDate_ (BOTH buildDQE copies) sanitizes AD/AE/AF via `sanitizeAbandonedCellForNeon_` (typeof-guarded, null->'').
+- **F-8** `rowDateIso_` serial branch formats in UTC (was -1 day for coerced numeric date cells in west-of-UTC zones); the old test pinned the bug -- corrected.
+- **F-50** `dcLogPipelineHealth_` passes the event OBJECT -- the `directBuild` Pipeline Health row now writes real Step/Status/Rows/Notes.
+- **Alerts weekend (F-6 class):** `runDailyAlerts_` skips weekend RUNS + assesses the previous BUSINESS day (Mon->Fri). Previously Friday's alerts fired SATURDAY and Monday skipped. INV-33 synced. NOTE for operator: Friday alert emails now arrive Monday morning (intended).
+- **F-33** `sendInsightsReportEmail` rejects reversed custom prior ranges (was silently emailing prior=0/+100% reports).
+- **F-27** `REPORT_USAGE_SUPPRESS_` execution flag: cache-warm runs no longer pollute Report Usage. NOTE: PRE-deploy history still contains warm rows (installing-admin email at the warm hour) -- filter when analyzing.
+- **F-30** dead `ADMIN_EMAILS_DISPLAY` deleted (CLAUDE.md synced).
+- **F-23** cache-version-sync now tracks qcdAll/inboundHeatmap/directCall (15 prefixes).
+- **F-24/F-56** check-duplicated-files.sh: missing pair file FAILS; function-level `sanitizeAbandonedCellForNeon_` drift check added (both failure paths tested).
+- **F-61/F-62** dashboard.html copy: QCD hint (retired toggle) fixed; Help "two pages"->three incl. Escalations; freshness-pill title = DQE+QCD max.
+DEPLOY: all three projects -- Department Dashboard (`clasp push -f` + version), cdr-report (buildDQE), cdr-import (buildDQE + directCallMetrics). No blocking operator actions.
+REMAINING from the scan (see the Batch plan in-session): Batch 2 (data accuracy: F-13 drilldown, F-10 inbound export dupes, F-12 winter day shift, F-11 +36:36 custom report, F-19 roster cap, F-26 PII logs, F-51/F-52), Batch 3 (bulk-path: F-7/F-17/F-18/F-21/F-55), Batch 4 (consistency Lows: F-15/F-28/F-29/F-31/F-32/F-34..F-49), Batch 5 (escalations: F-43..F-46), Batch 6 (test debt F-58), strategic track (queue normalization -> un-gate Inbound/Direct, QCD retirement, F-20, F-22, holidays, Escalations Phase 2, legacy decommission incl. F-25).
+Where I left off: Batch 1 shipped + pushed; branch has 4 unmerged commits awaiting PR/merge + the three deploys.
+
+### Latest session (broad-implement: broad-scan F-1..F-6)
+Branch `claude/broad-scan-xkmoam`, commit `07fb4de`, PUSHED. 205/205 tests (12 added), INV-16 in sync. Preceded by a full 3-stage /broad-scan (findings F-1..F-62 in that session's report; top-5 = F-2, F-1, F-3, F-5, F-6 -- all now fixed, plus F-4).
+- **F-1** IR cross-dept trend leak: `computeIndividualReport_` now applies the INV-53 `visibleAgents` filter to `trendData.datasets` too (was summaryData-only). Cache `individual:v8`->`v9` + all doc tables synced (cache-version-sync green). Test pins no-dataset-for-crafted-name.
+- **F-2** AD/AE/AF lockstep (BOTH buildDQEHistoricalData copies, byte-identical): the three columns now come from ONE chronologically-sorted missed-leg list (one entry per missed leg on an abandoned parent; unpairable abandoned parents APPENDED to AD with no AE/AF partner), so the Missed report's positional AF[i]<->AD[i] pairing / "path" journey drill gets the right parent id. AD's id SET is unchanged (dept-wide unique-abandoned counts intact; sentinel rows were already lockstep). HISTORICAL rows keep the old pairing until rebuilt -- rebuild recent dates via buildDQEHistoricalData + backfillDQEHistoryUpsert() if drill accuracy on old dates matters.
+- **F-3** Direct Call History refresh-delete: new `dcDateIso_` + getDisplayValues compare (Sheets coerced the M/D/YYYY strings to Dates; String(getValues) never matched -> duplicates every re-import). EXISTING duplicate rows from past re-imports are NOT auto-removed -- operator repair below.
+- **F-4** getCallJourney fallback entitlement: manager fallback now requires the call id to appear in the manager's OWN dept's Missed report for that date (`callIdInDeptMissedReport_`; admin fallback ungated). Fail-closed on any error.
+- **F-5** compareAlertConfigSources/compareDigestConfigSources: read sheet + Neon DIRECTLY (new `sheetAlertConfigRawValues_`/`sheetDigestConfigRawValues_` + `parseAlertConfigValues_`/`parseDigestConfigValues_` splits); Neon-unreachable -> `{clean:false, error}` instead of the sheet-vs-sheet false "PARITY CLEAN"; no more CONFIG_SOURCE property flip mid-compare.
+- **F-6** Daily digest: trigger skips weekend RUNS (today's dow); `digestWindowFor_('daily')` = previous BUSINESS day (Mon->Fri; weekend manual/preview->Fri). Docs synced (Digest.gs header, CLAUDE.md INV-45, known-issues). Previously Friday's digest went out SATURDAY and Monday sent nothing.
+DEPLOY: Department Dashboard (F-1/F-4/F-5/F-6) + cdr-report (F-2) + cdr-import (F-2/F-3), each `clasp push -f` + new version. OPERATOR: (1) optionally rebuild recent DQE dates + `backfillDQEHistoryUpsert()` for corrected AD/AF pairing on historical rows; (2) dedupe existing `Direct Call History` duplicate rows (delete + re-import affected dates, or a one-off repair -- new writes self-heal per date on next build); (3) daily digest subscribers will notice delivery moving from Sat to Mon (intended).
+Follow-ons (from the same broad-scan, NOT implemented): F-7..F-62 -- notable next: F-9 QCD expand dead listener, F-14 Overview MTD undercount, F-16 remirror sanitizer bypass, F-23/F-24 guard gaps.
+Where I left off: F-1..F-6 shipped + pushed on `claude/broad-scan-xkmoam`; awaiting PR/merge + the three deploys + operator actions.
+### Latest session cont'd (broad-implement #2 option a + #1 solo-toggle)
+Same branch `claude/broad-scan-je9ga7`. Commit d1097e2 (#1) + a doc-sync commit (CLAUDE.md S23/design-decision). 193/193, balanced.
+- **#2 = option (a) = NO-OP:** owner chose to leave the 0-metric cards as-is (correct-but-quiet: dept had no activity on the single latest date while the 30-day sparkline shows history). No code.
+- **#1 SHIPPED:** Overview dept-tile click now SOLOS that dept's line on the 30-day trend chart instead of navigating. Refactored the spotlight model from a single `chart._spotlightPinned` index to a `chart._spotlightPins` set (`chartSpotKey_`/`chartSpotlightStash_`/`chartSpotlightHasPins_`/`chartSpotlightApplyPins_`/`chartSpotlightTogglePin_`). Legend onClick + tile onClick both call `chartSpotlightTogglePin_(chart, key, additive)`; Shift/Cmd/Ctrl-click = additive (compare 2+). Pinned tiles get `.ov-tile-soloed` via `ovSyncTilePins_` (guarded to `chart === ovChartInstance` so the QCD chart reusing these helpers isn't cross-contaminated). NAVIGATION now via chart POINT click (`ovHandlePointClick_`→`ovRouteToDept_`) or the dept-selector dropdown. CLAUDE.md S23 + the multi-page design-decision text updated.
+- **STILL QUEUED:** #7 YTD Overview chart tab (server trend expansion + cache bump + tab UI); #11b (what the 12-mo Answered chart measures for Power — needs live numbers); #9-Spanish (re-verify after redeploy).
+- **PENDING:** PR + merge for the accumulated on-branch commits — GitHub MCP was disconnected/needs auth at end of session.
+
+### Latest session cont'd (batch 4: #10, #5, #12 + #2/#11b investigation)
+Same branch. Commits ed74b3d (#10+#5), d9d3106 (#12). 193/193, balanced.
+- **#10:** Reports dropdown → `data-admin-only`; managers (+ admins in view-as) get a solo `#insights-solo-btn` proxying to the dropdown's launcher. Wired in init (non-admin reveal) + applyViewAs_ (view-as toggle).
+- **#5:** Overview "abandons" question chip repointed QCD → Insights.
+- **#12:** heatmap already has rich native-title hover (abandoned/total per cell); added a subhead hint + margin-bottom gap. (Did NOT use `.gloss` — its ::after circled-i would clutter every cell.)
+- **#2 INVESTIGATED (not fixed — needs UX decision):** cards show 0 metrics + a sparkline because the headline uses ONLY the global `latestDate` (`latestDay`, CompanyOverview.gs:385) while the sparkline uses the whole 30-day `trendByDate`. Depts with no activity ON the latest date (Manual Mobility / Eligibility MM&R / Field Ops Power / Denials) read 0 but show recent history. Correct-but-confusing. FIX OPTIONS to ask: show 0 / "quiet on <date>" note / each dept's own last-active day.
+- **#7 DEFERRED (bigger):** YTD Overview chart tab needs a server trend expansion (~180+ days × 14 depts) + cache bump + tab UI.
+- **STILL QUEUED:** #1 Overview card→solo/Shift-multi-select chart toggle (big, NOT started); #7 YTD; #2 fix (pending UX decision); #11b (what the 12-mo Answered chart measures for Power — likely DQE per-agent answered summed monthly, needs the actual numbers to confirm the mismatch); #9-Spanish (RE-VERIFY after redeploy of the #8 fix — if Power's queue-only section still shows Spanish, scope it to queuesForDept_).
+
+### Latest session (broad-implement: big deploy-feedback batch — 4 commits)
+Branch `claude/broad-scan-je9ga7` (restarted from merged main after PR #142). 193/193 tests, INV-16 in sync, braces/divs balanced. Commits: be9569a, f5b31fc, 01ee847, b22a837 (pushed, NOT PR'd).
+- **#8 view-as/nav stale dept (be9569a):** `setPage('dept')` now reloads when the painted dept (`lastSummaryDept_`) != requested dept (guarded vs double-load via the disabled refresh btn); `ovRouteToDept_` simplified. Fixes My-Dept nav + view-as click showing a stale wrong-dept table/Missed/QCD until Refresh.
+- **Insights categorization #11c/d/a (f5b31fc):** new `insClassifyAgent_` (STANDING-first: current %answered vs 92% target + 5-ring volume gate → strong/steady/attention) drives the card rail + triage tiers; `deltaClassify_` (trend) becomes the secondary trend pill. Tiers relabeled Strong/Steady/Needs attention. Positive Insights-banner mark ↑ green (`--good`) not blue. Client-only, no cache bump. deltaClassify_ unchanged for Compare Ranges.
+- **Small tweaks (01ee847):** #6 removed the redundant Overview "Data through … Rung …" summary line (ovRenderSummaryLine_ hidden no-op); #9 "Queue-only abandoned" gloss tooltip (both surfaces); #11e delta-chip hover tooltip (insDeltaBadge_); #4 sticky `.agents thead th` given an opaque bg (was transparent → rows showed through = the all-dept "gap").
+- **All-dept report #3 (b22a837):** nest sub-queues under parent banner (server `parent` per dept + raw longestWaitSec/avgAnswerSec; client groups + computes section total); "(dept) total" row only when section >1 queue; exclude A_Q_Intake + Backup CSR (`QCD_ALLDEPT_EXCLUDE_QUEUES`, owner-asserted roll-ups); abandon% >5% bold on the bar + source lines; CSV gains Sub-dept col. Cache qcdAll:v2→v3; INV-51 updated.
+- **DECISIONS captured this session:** #11c standing-first, #11d Strong/Steady/Needs-attention, #5 repoint chips to kept reports, #6 remove line (done), #7 add YTD (queued).
+- **STILL QUEUED (not built):** #1 Overview card→solo/Shift-multi-select chart toggle (big); #7 YTD tab on Overview chart; #10 managers get an Insights button instead of Reports dropdown; #12 heatmap↔chart gap + richer cell hover; #5 repoint question chips to Insights/Missed/Individual. **INVESTIGATIONS:** #2 dept cards with 0 metrics but a mini-chart (Manual Mobility/Eligibility MM&R/Field Ops Power/Denials — likely QCD data but no DQE agent rows); #9-Spanish (verify after the #8 fix loads correct dept; if Spanish still in Power's queue-only section, scope it to `queuesForDept_`); #11b what the 12-mo "Answered" chart measures for Power.
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions; qcdAll:v3 self-heals. Where I left off: 4 batches shipped on-branch (unmerged); awaiting redeploy + a PR/merge and/or "continue" for the queued items.
+
+
+### Latest session (deploy feedback batch: diagnostics gate, total-to-top, missed-chart, view-as bugs, all-dept report overhaul)
+Branch `claude/broad-scan-je9ga7` (restarted from merged main after PR #141). 193/193 tests, INV-16 in sync, braces/divs balanced. Commits `e858812` (fixes) + `7b1547a` (all-dept overhaul). NOT yet PR'd.
+- **Diagnostics admin-gate:** `renderDiagnostics` early-returns for non-admins; `#diagnostics` got `data-admin-only` so view-as preview hides it too.
+- **Totals row moved to TOP** of the My-Dept agent table + Overview mini-table: the `<tfoot>` became a `<tbody class="agents-totals">` above the data rows (tfoot always renders bottom); CSS retargeted `.agents .agents-totals td` (divider below). JS writes same id.
+- **Missed bars width (root cause):** `#dept-missed-chart-row .chart-section {max-width:480px}` ID rule out-specificity'd the `.mode-bars` 760px rule -> scoped `:not(.mode-bars)`. Peak outline 3px->2px.
+- **View-as click-through (#5):** `ovRouteToDept_` now forces `refresh()` when the selector was already on the clicked dept (pinned+disabled in view-as) -- `setPage('dept')` doesn't load the table itself, so stale data persisted. FIXED.
+- **#6 Daily Call Queue Report -> open to all managers** (owner decision): `getQcdAllDepartments` `assertAdmin_` -> signed-in check; button no longer `data-admin-only`. INV-51 + S32 synced.
+- **#1 all-dept report overhaul:** pre-loads yesterday on open; in-modal date changer (preset+from/to+Update, re-gen in place, form/Generate/Back retired); Answered/Abandoned/Abandoned% -> split bar (`qcdDailyBarCell_`); per-queue rows expand into data-driven `bySource` + violation dates (server adds bySource+violationDates; `qcdAll:v1->v2`).
+- **OPEN -- #4c (Spanish in Power's missed report, view-as):** queue-only section includes a queue whose exts overlap the dept's ROSTER-derived ext set; Spanish appears in Power only if a Power roster agent (maybe the admin) bridges to Spanish. Likely a staleness artifact of the #5 bug OR a roster-overlap data issue -- OWNER TO RE-TEST after redeploy; if it persists, confirm whether a Power roster agent takes Spanish overflow / admin is on Power's roster before any code fix (don't break legitimate overlap).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions; qcdAll:v3 self-heals. Where I left off: batch shipped on-branch (unmerged); awaiting redeploy + #4c re-test + a PR/merge request.
+
+### Latest session (broad-implement: QCD-parity #1 secondary metrics + #2 short-window presets)
+Branch `claude/broad-scan-je9ga7`, commit `cf5f205`. 193/193 tests, INV-16 in sync, braces/divs balanced. NOT yet PR'd (stacks on the prior unmerged deploy-feedback commits).
+- **#1 secondary queue metrics (Answered / Longest wait / Avg answer):** passed through `insightsQueueHealth_` (`totalAnswered` on totals; `totalAnswered`/`longestWait`/`avgAnswer` on each perQueue row -- all already on computeQcdReport_'s queueBreakdown, just dropped before). Surfaced WITHOUT new headline tiles/columns: a muted dept-total secondary line (`#ins-qh-secondary`) under the tiles + a stat strip atop each per-queue EXPAND (every queue row is now expandable, not only ones with sources/violations). Shared `insQhStatStrip_`. Cache insights:v15->v16 (INV-30 + docs + cache-version-sync synced). Test pinned.
+- **#2 short-window presets:** added Yesterday / This week / Last week to the Insights Quick-select (`ins-preset` + `insApplyPreset` handler) for the agent-free queue/dept quick-look. **Single-day daily-chart hiding was ALREADY handled** -- the consolidated trend chart gates its Monthly/Daily toggle on `labels.length > 1`, so a single-day window already hides Daily + forces Monthly (no code change).
+- **#3 all-departments report:** owner + I agreed NO porting -- it's a company-wide admin surface that survives QCD retirement (getQcdAllDepartments is already independent of getQcdReport; just keep the Overview `#ov-qcd-alldept-btn` wired when the QCD tab is removed).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions. Where I left off: #1+#2 shipped on-branch (unmerged). Remaining QCD-retirement prereqs now: only the QCD image-export + the standalone all-dept button rewire (both minor), then the retirement itself (repoint /report/qcd -> Insights, delete QCD tab/modal/getQcdReport). Awaiting redeploy + a PR/merge request.
+
+### Latest session (deploy feedback: missed-chart polish + Insights daily bar + roster-only Insights)
+Branch `claude/broad-scan-je9ga7` (restarted from merged main after PR #140). 193/193 tests, INV-16 in sync, braces/divs balanced. Commits `10d0fa2` (UI polish) + `2ee9bc1` (roster-only Insights). NOT yet PR'd.
+Four items of live-deploy feedback from the owner:
+- **Missed bar chart (item 1):** abandoned-aware color (buckets containing an abandoned ring = solid warn red, still volume-ramped; abandoned-free = faint semi-transparent) via a NEW server-side per-bucket `chart.abandoned` array (missed cache v11->v12); peak outline 1.5px->3px; wider bars (a `mode-bars` class lifts the 520px radar cap to 760px + aspect 1.05->1.4; radar keeps its cap). `missedSyncToggles_` now also tags each chart-row mode-bars/mode-radar (called from both render paths).
+- **Call-path chip (item 2 layout):** long numeric parent-id truncates (ellipsis, max ~7ch) with full value in the hover title; 📋/↳ still use the full id. Stops overrun onto the agent name.
+- **Insights Daily breakdown (item 3):** Answered/Abandoned/Abandoned% folded into one green/red split bar (reuses `.ans-bar`; 5% bench tint) via `qcdDailyRowsHtml_(rows,{bar:true})` (QCD modal's numeric table unchanged). Violation dates -> MM-DD-YY via shared `fmtViolDate_` (applied in Insights + the QCD modal detail).
+- **Insights roster-only (item 4):** owner confirmed the cross-dept agents carried QUEUE chips (queue-only floaters, e.g. CSR transferring into Service). `computeInsights_` `visibleAgents` now roster-only (floaters dropped from agentData; teamStats/trend already roster-gated so unchanged; queueOnlyAgentCount always 0); the Insights picker no longer offers the floater group. IR/PR/CR still surface floaters (INV-53) -- same split as My Department. insights cache v14->v15.
+- **Items 2-data (path button "no results") + 6 (empty heatmap):** BOTH scope by the dept's mapped queue names against `inbound_calls` (the INV-54 two-name-space bridge). Owner's call: "likely no inbound data" for Service -- LEFT AS-IS, revisit if a known-abandoned Service call still shows no path (then check inbound_calls entry_queue/final_queue vs `inboundQueuesForDept_('Service')` and add Inbound Queue Aliases in Dept Config).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator actions. Where I left off: all four feedback items shipped on-branch (unmerged); awaiting redeploy + a PR/merge request. Still-open follow-up = the deferred Phase 2 QCD RETIREMENT (repoint /report/qcd -> Insights + delete the QCD tab/modal/getQcdReport, after prod validation).
+
+### Latest session (broad-implement: QCD->Insights consolidation Phase 2 PARITY — heatmap + agent-free run)
+Branch `claude/broad-scan-je9ga7`, commit `c7b6b06`. 193/193 tests pass, INV-16 in sync, script.html braces balanced (0 diff), dashboard.html divs balanced (0 diff).
+- **Scope decided WITH OWNER (AskUserQuestion):** "Parity only, keep QCD" + agent-free render = "Full roster (digest pattern)". So this session landed the additive parity (gaps 4 + 6) and KEPT the QCD tab/modal/getQcdReport for parallel-run prod validation (parity-first house style, INV-51). The `/report/qcd` repoint + retirement are explicitly DEFERRED to a post-validation follow-up.
+- **Gap 5 (export) was already DONE** — `insCopyImage_`/`insEmailReport_`/`insPrint_`/`insDownloadCsv_` all wired (corrects the prior `.cycle` note that listed it as pending). No work.
+- **Gap 4 — heatmap:** new `#ins-heatmap` container in dashboard.html (after the Queue health section) + a `loadAbandonHeatmap_('ins-heatmap', meta.department, meta.from, meta.to)` call in `insRenderReport_` (after `insRenderQueueHealth_`), reusing the shared `getInboundHeatmap`. Admin-gated `if (USER.role==='admin')` exactly like the QCD heatmap; else-branch hides the panel for managers. Insights meta already carries department/from/to (both the data + empty paths).
+- **Gap 6 — agent-free run:** new shared `resolveInsightsAgents_(rawAgents, roster)` in InsightsReport.gs — dedups/trims a non-empty selection BYTE-EQUIVALENTLY to the loop it replaced, and defaults an EMPTY selection to `roster.names` (the digest pattern, INV-45; floaters excluded since only roster seeds the default). Both `getInsightsReport` AND `sendInsightsReportEmail` use it (the only remaining throw is a genuinely empty roster: "No agents on this department's roster."). Client: `insUpdateGenerate` now enables Generate whenever the roster has ≥1 agent (checked or not, via `.ir-agent-cb` count) instead of requiring a check; the empty-selection guard in `runInsReport` removed; the `2. Agents` picker hint advertises "leave all unchecked to see the whole department (queue / dept view)".
+- **NO cache bump** — `meta.agents` already carried the resolved selection, so agent-free is byte-identical to explicitly selecting the full roster (deterministic per `hashAgents_` key). insights:v14 unchanged.
+- **Tests:** the `sendInsightsReportEmail` empty-agents double (encoded the OLD throw) updated to assert it now SENDS over the full roster; new positive test pins agent-free `getInsightsReport` meta.agents == full roster == explicit full-roster teamStats.
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator/env actions. **Where I left off:** Phase 2 PARITY shipped + pushed (c7b6b06). REMAINING = Phase 2 RETIREMENT (owner deferred until prod-validated): repoint `/report/qcd` → Insights (ROUTES_ registry, one entry), delete the QCD tab (`#qcd-report-btn`)/modal (`#qcd-modal`, ~163 lines)/`getQcdReport` RPC/`qcdRenderReport_` (~450 lines) — KEEP `computeQcdReport_`, `getQcdAllDepartments`, `computeQcdSnapshots_`, `computeDeptQcdSnapshot_` (all independent of `getQcdReport`, confirmed). That step breaks S32 + needs a deep-link deprecation note.
+
+---
+
+### Latest session (broad-implement: QCD->Insights consolidation Phase 1 — gap 1, tri-metric by-queue chart)
+Branch `claude/broad-scan-je9ga7`. 192/192 tests pass, INV-16 in sync, script.html/dashboard.html braces balanced.
+- **Gap 1 (option ii — one "By Queue" tab + a metric sub-selector):** completes the data+chart superset. The Insights consolidated trend chart's queue tab (renamed "Abandoned % by Queue" -> "By Queue") now plots Abandoned % / Total Calls / Violations via a `#ins-queue-metric` `<select>` (shown only on that tab). Abandoned % stays the default (5% threshold line + % formatting); Total Calls / Violations are integer counts (no threshold line). Server `insightsQueueHealth_.trend` gained `metrics: { totalCalls, violations }` (monthly+daily, per queue + own dept total), parallel to the default abandoned-% series (refactored via generic per-field extractors; the abandoned-% fields are byte-identical, so the forecast + existing path are unchanged). Client: `insQueueMetric` state (persisted in prefs `cdr.ins.prefs.v2` as `queueMetric`), sub-selector handler + visibility toggle in `insRenderTrendChart_`, the `isQueues` branch parameterized by metric (% vs count formatting, conditional 5% line). Cache `insights:v13`->`v14` (+ all doc/comment refs synced; cache-version-sync green). Test extended (trend.metrics totalCalls/violations daily series; used `.join(',')` not deepEqual -- harness vm-realm arrays trip deepStrictEqual's prototype check).
+- **Consolidation status:** Phase 1 COMPLETE (gaps 1+2+3) -- Insights Queue health is now a strict data+chart superset of the QCD modal's per-dept view. REMAINING = Phase 2: the UX-model change (render Queue health regardless of agent selection -- owner already approved) + gaps 4-7 (heatmap, image/email export, QCD date-defaults/agent-free run, `#/report/qcd` routing/nav), then retire the QCD tab/modal/getQcdReport (keeping computeQcdReport_, getQcdAllDepartments, computeQcdSnapshots_, computeDeptQcdSnapshot_ -- all independent).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator/env actions; insights:v14 cache self-heals. Where I left off: Phase 1 fully shipped; Phase 2 is the next consolidation step (start with the agent-free Queue health render + gap 4 heatmap).
+
+---
+
+### Latest session (broad-implement: QCD->Insights consolidation Phase 1 — gaps 2 & 3 + My-Dept QCD card tooltip)
+Branch `claude/broad-scan-je9ga7`. 192/192 tests pass, INV-16 in sync, script.html/dashboard.html braces balanced.
+- **My-Dept QCD card tooltip (decision C):** the "Queue Call Data" side-card always shows the latest QCD day (computeDeptQcdSnapshot_ is range-independent -- QCD can update on a different day than DQE, and the range defaults to latest DQE, so anchoring avoids an empty card). Added a native tooltip + help cursor on the card title clarifying it's the most recent queue day, independent of the range. Client-only, committed `eb1a8f3`.
+- **QCD->Insights consolidation Phase 1 (gaps 2 & 3 of the 7-gap parity list):** make Insights Queue health a DATA-superset of the QCD modal's tables.
+  - **Gap 3 (daily table):** `insightsQueueHealth_` now returns `dailySeries` (the per-day QCD rows, dept-OWN queues, range-scoped); client renders a collapsed "Daily breakdown" `<details>` table in the Queue health section (`#ins-qh-daily`/`#ins-qh-daily-tbody`) via the new shared `qcdDailyRowsHtml_`.
+  - **Gap 2 (bySource subtable):** `insightsQueueHealth_` perQueue rows now carry the full `bySource` array; Insights queue rows became expandable (chevron + detail row) showing the same per-call-source subtable the QCD modal shows, via the new shared `qcdSourceSubtableHtml_` (extracted from the QCD modal's inline block; QCD modal refactored to use it -- byte-identical output). Violation dates moved off the inline cell `<details>` into the row expand (QCD-modal parity).
+  - Cache bumped `insights:v12`->`v13` (+ all doc/comment refs synced: InsightsReport.gs, architecture.md, known-issues.md table, conventions.md table, CLAUDE.md x3 incl. INV-30; cache-version-sync test green). insights-report.test.js extended (dailySeries + bySource pass-through assertions).
+- **DEFERRED -- Gap 1 (tri-metric queue chart):** STOPPED & flagged per broad-implement rules. The Insights consolidated trend chart's "Abandoned % by Queue" tab is abandoned-%-specialized (5% threshold line, %-formatting throughout). Adding Total Calls / Violations per-queue needs: (a) generalizing that shared chart branch by metric, (b) server `trend` series for the 2 new metrics, and (c) a UX decision -- 3 extra top-level tabs vs a metric sub-selector within the queue view. Higher regression risk to the existing working tabs + a UX call that's the owner's. NOT started; awaiting direction on the UX shape.
+- **Consolidation remaining after Phase 1:** Gap 1 (above) finishes the data/chart superset. Phase 2 = the UX-model decision (render Queue health regardless of agent selection -- owner ALREADY approved) + gaps 4-7 (heatmap, export, date-defaults, `#/report/qcd` routing), then retire the QCD tab/modal/getQcdReport (keeping computeQcdReport_, the all-dept report, and both snapshot paths -- all independent).
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator/env actions; insights:v13 cache self-heals. Where I left off: Phase 1 gaps 2&3 shipped; gap 1 awaiting the tabs-vs-subselector UX decision.
+
+---
+
+### Latest session (broad-implement: P3 — My-Dept QCD snapshot own-canonical total)
+Branch `claude/broad-scan-je9ga7`. 192/192 tests pass, INV-16 in sync, script.html braces balanced (parens -1 pre-existing on HEAD).
+- **P3 (from this cycle's /broad-scan):** the My Department "Queue Call Data" snapshot's all-queues total folded sub-queue children in, contradicting the QCD modal + Overview (own-queues-only) -> same parent dept (Sales/Power/CSR) showed different dept-level violations/abandoned% across surfaces. FIX: `Data.gs::computeDeptQcdSnapshot_` now decomposes own (main) vs sub-queues; the UNQUALIFIED dept total (`totalCalls`/`abandonedPct`/`violations`) is OWN-only (reconciles cross-surface), with new `subTotals`/`allTotals` (null when no sub-queues) + `mainQueueCount`/`subQueueCount`. Client `renderDeptQcdSnapshot_` renders GATED carousel pages: Main queues (only >1 own), Sub-queues (separate depts) (only >1 sub), All queues (incl. sub-queues) (only when sub exist) -- single-queue depts unchanged. Cache bumped `summary:v9`->`v10` (+ all doc/comment refs synced: OrphanFix.gs, known-issues.md x2, conventions.md, architecture.md, CLAUDE.md INV-30/INV-51; cache-version-sync test green). Test `insights-report.test.js` updated to the own-canonical shape (+ sub/all/count assertions).
+- **DEFERRED (follow-on, owner-flagged):** the QCD MODAL still shows only the own "Department total (own queues)" + separated child rows -- NOT a pre-summed All-queues row. Adding consistent Sub/All rows there needs a `computeQcdReport_` extension (per-group MTD violations via `computeMtdViolations_` + volume-weighted avgAnswer + max longestWait) + a `qcd:v10`->`v10` bump, which touches the shared engine Insights depends on -- out of proportion to the P3 defect, so split out. My-Dept fix alone removes the silent mismatch.
+- **Consolidation context (no code):** earlier this session examined QCD Report -> Insights consolidation feasibility (shared `computeQcdReport_` engine; ~70% already in Insights Queue health; 7 UI-porting gaps, one M [tri-metric chart] + six S; UX decision = render Queue health regardless of agent selection, owner-approved). Not started.
+DEPLOY: Department Dashboard only (`clasp push -f` + new version). No operator/env actions. Where I left off: P3 shipped on branch; awaiting the QCD-modal-symmetry follow-on decision + the broader consolidation go-ahead.
+
+---
+
+### Latest session (feature build: #3 call-path drill-through + #5 onboarding tour)
+Branch `claude/brave-dijkstra-wuonrv`. 136/136 tests, INV-16 in sync, divs/braces balanced.
+- **#3 Inbound-call path drill-through** (commit 081491b): `InboundReport.gs::getCallJourney({callId,date,department})` returns one call's journey by (call_date, call_id); per-dept gated + scoped by `inboundDeptPredicate_` (manager only sees own-dept calls). Client "↳ path" button on abandoned 🚨 rings (Missed report + My Dept missed section) -> `#call-journey-overlay`, rendered via the reused Caller Lookup renderers (clChainHtml_/clJourneyRowHtml_). Scoped to abandoned calls (which carry a parent id); Insights/QCD aggregates don't expose per-call ids.
+- **#5 Onboarding tour** (this commit): client-only coachmark walkthrough (`initTour_`/`startTour_` + `.tour-*` styles). Spotlight via box-shadow dim; 7 steps anchored to stable IDs (missing/hidden targets skipped); reduced-motion aware. Auto-runs once for first-time visitors (localStorage `cdr.tour.done`, Overview only) + replayable from Help -> Guided tour.
+
+DEFERRED still: workday-ALIGN the prior window (vs flag-only); Escalations Phase 2 (team-tools queue); inbound-journey drill for Insights/QCD (no per-call id there). DEPLOY: Department Dashboard only (#3 + #5). #3 needs a live Neon smoke test (abandoned ring -> ↳ path -> journey renders).
+
+---
+
+### Latest session (feature build: working-day mismatch flag + Escalations + View-as)
+Branch `claude/brave-dijkstra-wuonrv`. 136/136 tests pass, INV-16 in sync, divs/braces balanced.
+- **A — Working-day mismatch flag** (commit f5688b0): shared `Util.countWorkingDays_`; CR + Insights flag on Mon-Fri days not calendar days (no more false mismatch on equal-workday windows). Holidays deferred (no global source). Cache bumps compareRanges:v6 / insights:v12 + INV-30/INV-35 + tests.
+- **B — Escalations module Phase 1** (commit 9ec3b62): Neon `escalations` table; `Escalations.gs` (getEscalationsInit/getEscalations read, createEscalation admin-only, resolveEscalation/updateEscalationComment = the FIRST per-dept non-admin write path, INV-55). Header tab + modal, admin-only create form, pending/completed filter, mandatory-resolution UX. Deploy-verified (JDBC; no unit harness). Needs dashboard NEON_* + script.external_request.
+- **C — View-as-Manager** (this commit): admin "View as <dept>" header control; `getCompanyOverview(req.viewAsDept)` personalizes as a synthetic manager (admins only, safe — only hides); `body[data-view-as]` CSS hides admin chrome; dept selector pinned; SWR cache bypassed in preview. No INV-30 bump (post-cache personalization).
+
+DEFERRED (decided but not built this session): inbound-journey drill-through for abandoned calls (#3, ready); onboarding tutorial (#5, ready); workday-ALIGN the prior window itself (vs just the flag); Escalations Phase 2 (team-tools pending_review queue). DEPLOY: Department Dashboard (all three) + cdr-report (none) -- A/C dashboard-only, B dashboard-only. Escalations + View-as need a live Neon/deploy smoke test.
+
+---
+
+### Latest session (broad-implement: Tier 2 — F25, F13, F12, F9, F11)
+Branch `claude/brave-dijkstra-wuonrv`. 135/135 tests pass, INV-16 in sync.
+- **F25** dashboardCDR.js: `idxOr` helper (fixes the `|| dflt` index-0 trap) + a warning logging any missing/renamed CDR Historical Data list-columns that would otherwise silently report a metric as zero. Detection only; aggregation unchanged.
+- **F13** Auth.gs `getManagerDepartment_`: scans all Access Control rows and logs a warning when a manager matches >1 dept (only the first is honored — managers are pinned to one dept). Behavior unchanged for single-row managers; makes the truncation detectable.
+- **F12** InsightsReport.gs + script.html: new `meta.priorOverlap` flags a CUSTOM prior window overlapping the current range (overlapping days count toward current only); client renders an inline "Windows overlap" caveat. Cache bumped `insights:v10`→`v11` (response shape change) + doc sync. New regression test.
+- **F9** buildDQEHistoricalData.js (BOTH copies, byte-identical): counts queue legs whose START_TIME is present-but-unparseable (dropped from in-window counts) and surfaces the count in the final `buildDQE` Pipeline Health note — was silent shrinkage on a CDR format drift.
+- **F11** OrphanFix.gs `renameAgentInNeon_`: wraps the rename in an explicit transaction (atomic, rollback on error) and computes the conflict-skip count EXACTLY (rows still under the orphan name after the rename) instead of a racy pre-count subtraction.
+Deploy: Department Dashboard (F12/F13/F11) + cdr-report (F25/F9) + cdr-import (F9). No blocking operator actions.
+
+---
+
+### Latest session (broad-implement: Tier 1 observability — F5, F6, F8, F29; F7 deferred)
+Branch `claude/brave-dijkstra-wuonrv`. 134/134 tests pass, INV-16 in sync.
+- **F29** NeonRead.gs + NeonKeepWarm.gs: `getDashboardNeonConn_(opts)` gains `skipReadHealth`; keep-warm passes it so a warm-ping failure no longer writes the DQE read-back failure streak (was a sticky false "read-back FAILING" on the sheet path).
+- **F5** autoImport.js + CompanyOverview.gs: the integrated `:DQE` block now logs a rows:0 `success` row on a no-op build (already-in-history / no new data / F2 refusal), so "ran-empty" is distinct from "didn't run"/"failed". `computeOverviewPipelineFreshness_` now requires `rows>0` so a no-op can't falsely reset the 36h staleness clock.
+- **F6** Data.gs `getLatestDataDates`: only caches a result computed WITHOUT a thrown error (was pinning a null/partial freshness blob for the full TTL on a transient read error).
+- **F8** InsightsReport.gs + script.html: `insightsQueueHealth_` returns `{error:true}` on a genuine compute error (vs `null` for unmapped / missing-QCD-sheet, both benign); client renders a "Queue health unavailable" note instead of silently hiding. Missing-sheet pre-check keeps fresh installs benign (pinned by the existing test).
+- **F7 DEFERRED**: on close reading the admin-facing detection already exists (`recordNeonReadFailure_` fires on every Neon read-error path; surfaced by the read-back health line) and gross staleness is caught by the 36h pill. The only residual is a MANAGER-facing "served from sheet fallback" banner = M-scope product UX across all report headers; deferred, not forced.
+Deploy: Department Dashboard (F5/F6/F8/F29) + cdr-import (F5). No blocking operator actions.
+
+---
+
+### Latest session (broad-implement: F1–F4, F10, F24)
+Branch `claude/brave-dijkstra-wuonrv`. Implemented six broad-scan findings; 134/134 tests pass, INV-16 in sync.
+- **F1** InsightsReport.gs: `meta.rosterAgentCount` now = roster members ACTIVE in the current window (INV-27), not all selected roster. `queueOnlyAgentCount` derived independently. Cache bumped `insights:v9`→`v10` (+ doc sync in CLAUDE.md/known-issues/conventions/architecture). New regression test added.
+- **F2** buildDQEHistoricalData.js (BOTH copies, byte-identical) + autoImport.js: build refuses to write when `opts.expectedDate` (the importer's date) ≠ Raw-Data-derived date; daily + bulk call sites pass `expectedDate: dateObj`. Standalone trigger unaffected (no opts).
+- **F3** NeonMirror.js: deferred DQE mirror now routes abandoned cols 29-31 through a local byte-identical `sanitizeAbandonedCellForNeon_` (+ `#REBUILD` sentinel) — matches neonbackfill.js.
+- **F4** Alerts.gs + script.html: invalid-threshold dept rows no longer silently dropped — flagged `invalidThreshold`, logged as `error` Alert Log rows, drift-skipped, and shown as "⚠ invalid" in the modal config table.
+- **F10** script.html: shared `reportReqSeq` stale-response guard on all 6 IR/PR/CR/Insights fetch sites (button always resets; render skipped if superseded).
+- **F24** DQEdrilldown.js: drill-down canonicalizes Raw Data col-L names via `loadRosterCanonicalNames_` before matching the canonical DQE agent name.
+Deploy: Department Dashboard (F1/F4/F10) + cdr-import (F2/F3) + cdr-report (F2/F24). No blocking operator actions; insights cache self-heals on deploy.
+
+---
+
+
+**Branch:** `claude/dazzling-heisenberg-2png1z` · working tree has uncommitted design Phase 1 changes
+**Verify on resume:** `node --test` (132 pass) + `bash scripts/check-duplicated-files.sh` (INV-16 in sync)
+
+> Prior session's F1–F6 bug-fix work was **merged via PR #83** (commit `06639f5`),
+> so the earlier "not yet committed" note is superseded. This is a new work-stream:
+> the Claude Design package redesign (`docs/design-package/`), planning + Phase 1.
+
+### What shipped this session (NOT yet committed/pushed)
+Design-package planning + **Phase 1 foundation** (additive, zero behavioral change):
+- **Plan of record:** `docs/design-update-plan.md` — full conflict register (C1–C8),
+  decisions, and the phased sequence. Decisions: keep `--r:2px` (C1-A), binary
+  thresholds only (C2-A), keep `data-mode` dark (C3-A), chart factory yes / SRI-restore
+  no (C4-A), wire to `getDepartmentSummary` not `computeSummary_` (C5), adopt SWR with
+  per-viewer guardrails (C6-A), consolidation parked (C7), nav deferred (C8-A).
+
+**Separate work-stream this session (NOT redesign):** added a DQE Historical Data TZ repair to
+`cdr-report/sheetRepairs.js` — `previewDqeOldPstTimestampShift()` / `repairDqeOldPstTimestampShift()`.
+Old rows (Date < 2026-03-09) stored slot/AF missed-times in PST; current pipeline stores CST (+2h).
+Repair shifts K-AC (11-29) + AF (32) time-of-day strings +7200s, date-gated AND per-row PST-window
+validated (re-run safe; skips already-CST/mixed/anomaly rows), AF follows the row's slot decision
+(skips #REBUILD sentinel + non-time tokens), surgical per-row writes + plain-text lock. Fixes the
+Missed Calls report (it buckets by parsing the stored time; old PST values mis-bucket / drop off the
+8AM-5PM CST chart). Does NOT touch durations (TTT/ATT/AvgAbdWait) or counts. node --check clean;
+core shift/window math sanity-checked. NEEDS: deploy cdr-report (`clasp push -f`), run preview ->
+apply from the editor, then backfillDQEHistoryUpsert() if Neon mirror is consumed. NOT in the Node
+suite (SpreadsheetApp-bound, like the existing two repairs).
+  - **Follow-up (AF coercion ownership):** `repairDqeSlotTimestamps_` now recovers coerced
+    time cells in BOTH K-AC (11-29) AND AF (32) — AF holds the same H:MM:SS strings and
+    coerces to time serials identically; the slot repair previously skipped it. Correspondingly
+    `repairDqeAbandonedIds_` narrowed to AD/AE (30-31): it was mis-marking coerced single AF
+    times as "#REBUILD" (a fractional serial fails Number.isSafeInteger). CAVEAT: if anyone ran
+    the OLD 3-col `repairDqeAbandonedIds()`, some single AF times may already be wrongly
+    "#REBUILD" (serial overwritten → unrecoverable from the cell; needs a Raw Data rebuild).
+    DOC: CLAUDE.md number-coercion gotcha still says repairDqeAbandonedIds handles "AD-AF" — /sync-docs.
+- **Phase 1 / Part 1 — tokens** (`styles.html` `:root`): added `--r-sm/--r-lg/--r-pill`,
+  `--shadow-1/2/modal`, `--ease/--dur-1..3/--stagger`. **`--r` LEFT at 2px** (decision C1).
+- **Phase 1 / Part 2 — component layer** (`styles.html`, new block before `</style>`):
+  `.is-good/.is-warn/.is-bad` status helpers + 8 `ds-*` components (kicker/section,
+  chip/delta, KPI tile, status-rail card, table+bar, banner, toolbar/seg, modal shell).
+  Net-new `ds-` namespace (verified collision-free); NOTHING references them yet, so
+  the live app renders byte-identically. Static (no animation — that's Phase 2).
+
+Tests: 132/132 pass; whole-file CSS brace balance 860/860; INV-16 untouched. No invariants at risk.
+
+### OPEN / next steps
+1. **Commit + push** the Phase 1 CSS + `docs/design-update-plan.md` to this branch (not yet done).
+2. **Deploy (only when ready):** Department Dashboard `clasp push -f` + new deployment version.
+   Inert until markup uses the classes, so deploy is non-urgent / non-blocking.
+3. **Phase 1 / Part 3 — DONE (contained proof):** Insights team-rollup KPI tiles
+   migrated onto `ds-*`. New Insights-only `insKpiTileDs_` (script.html) emits `.ds-kpi`
+   markup; the four `prKpiTile_` calls in `insRenderReport_` swapped to it. Behavior
+   identical (same valence→color map, same binary `benchValueCls_` 92%/5% tint, shared
+   `irSparkline_`). Performance Report's `prKpiTile_` untouched; shared `reportHeadline_`
+   (used by all reports) intentionally NOT migrated. `.ds-kpi__spark` height nudged
+   20→22px so the 70×22 sparkline isn't clipped. **Live visual verify still pending**
+   (manual S37 post-deploy — can't run Apps Script here).
+   - **Increment 2 (DONE):** Insights queue-health per-queue table migrated to `.ds-table`
+     inside a `.ds-card` (dashboard.html) — the card supplies the chrome ds-table omits.
+     Contained to that one table; QCD's own `.qcd-source-table` instances untouched; no
+     JS references it (`.num`/`.qcd-warn-*` classes stay harmless). Tbody row builder
+     unchanged. Whole-file divs balanced 608/608.
+   - **Increment 3 (DONE):** Insights length-mismatch warning → `.ds-banner is-warn`
+     (badge + text). dashboard.html class swap (`cr-length-warning`→`ds-banner is-warn`,
+     contained — CR's own `.cr-length-warning` untouched) + `insRenderLengthWarning_`
+     restructured to emit `ds-banner__badge` ("Heads up") + a text `<div>`; warning copy
+     verbatim. Demonstrates the banner component (a new one). NOTE: the at-a-glance
+     headline still can't use ds-banner cleanly — it's the SHARED `reportHeadline_`.
+   - **Agent cards → `ds-card--rail`: DEFERRED on purpose.** They ALREADY use a left-border
+     classification rail (`.ins-card-improved/regressed/mixed` = accent/warn/muted), so a
+     ds-card--rail migration is ~zero visual gain but high unverifiable risk (padding/layout
+     preservation, drill-through, cards⇄chart toggle, collapsible details). Recommend doing
+     it only alongside a live before/after, or skipping (the existing rail already matches
+     the target look). Queue-health KPI tiles (inboundKpiTile_) remain a safe-but-quirky
+     option (bench-tint-on-cap + pr-delta badges to preserve).
+4. **/sync-docs:** add a CLAUDE.md note for the new `ds-*` component layer + radius scale
+   under CSS conventions (currently only `docs/design-update-plan.md` documents it).
+5. **Later phases (planned, not started):** Phase 2 (loaders + motion + `.ds-state` kit +
+   SWR Overview, per-viewer keyed), Phase 3 (chart factory + graceful fallback +
+   debounce/token on date edits). Held for sign-off: C7 consolidation, C8 nav restructure.
+
+### Post-merge increments (Phase 1 + sheetRepairs merged to main via PR #84 + sync-docs PR)
+- **Phase 1 eyeball-verified by the operator** (deployed; Insights ds-kpi tiles + ds-table +
+  ds-banner confirmed). Phase 1 is DONE.
+- **Increment 4 (DONE — first cross-report shared component):** promoted the Insights-only
+  `insKpiTileDs_` to a SHARED `dsKpiTile_` and migrated the **Performance Report** rollup tiles
+  onto it (6 `prKpiTile_` calls → `dsKpiTile_`); the dead `prKpiTile_` function was removed
+  (two history breadcrumbs + two stale comments updated to `dsKpiTile_`). Now used by Insights (4)
+  + PR (6) = 10 callsites, one definition. Behavior identical (same valence map, binary
+  benchValueCls_ 92%/5% tint, shared irSparkline_). `.pr-kpi-tile`/`.pr-delta` CSS untouched
+  (still used by `inboundKpiTile_` + a CR tile site). Live visual verify = scenario S14 (PR) +
+  S37 (Insights) post-deploy. tests 132/132; INV-16 in sync; JS `node --check` clean.
+
+- **Increment 5 (DONE):** Compare Ranges length-mismatch banner → `.ds-banner is-warn`
+  (mirrors Insights Increment 3). dashboard.html class swap on `#cr-length-warning`
+  (`cr-length-warning`→`ds-banner is-warn`, id kept); `crRenderLengthWarning_` restructured to
+  `ds-banner__badge` ("Heads up") + text `<div>`, copy verbatim; the now-dead `.cr-length-warning`
+  CSS removed (CR was its last user after Insights migrated). INV-35 logic (form hint / KPI
+  captions / CSV) untouched. tests 132/132; CSS braces 858/858; JS clean. Live verify: S18 (CR
+  length-mismatch) post-deploy.
+
+- **Increment 6 (DONE — includes a prod-regression FIX):**
+  (a) **FIX:** the `ds-kpi` migration silently dropped the binary benchmark tint (benchValueCls_
+  → `bm-target`/`bm-over`, the 92%/5% company standard) on KPI VALUES. Cause: the ds-* layer
+  sits at the END of styles.html, AFTER `.bm-target`/`.bm-over`, so `.ds-kpi__value`'s explicit
+  `color:var(--ink)` won the cascade (legacy `.pr-kpi-value` sat BEFORE `.bm-target`, so it never
+  needed this). Added two-class overrides `.ds-kpi__value.bm-target/.bm-over` (+ `__foot`) so the
+  tint wins regardless of order. **This was already in prod** on the merged Insights KPI tiles
+  (PR #84) — subtle (value not green/orange) so the eyeball pass missed it. Restores it there +
+  on the PR tiles (this branch).
+  (b) **Migrate:** `inboundKpiTile_` (label, value, cap, deltaHtml) → `.ds-kpi` markup — converts
+  BOTH the Inbound report KPI row AND the Insights queue-health tiles. Value/cap/delta preserved;
+  cap bench tint preserved via the (a) fix; dropped the literal "vs prior" (the delta pill conveys
+  it). `.pr-kpi-tile`/`.pr-delta` CSS still used by the CR-team + QCD tile renderers (not migrated).
+  tests 132/132; CSS braces 860/860; JS clean. Live verify: S38 (Inbound) + S37 (Insights qh) +
+  re-check 92%/5% tint shows on IR/PR/Insights KPI values, post-deploy.
+
+- **Increment 7 (DONE):** QCD KPI tiles (`qcdRenderKpiTiles_`) → `.ds-kpi`. label + value only
+  (no delta/spark/caption); the two warn-coded tiles (Abandoned % ≥5, Violations MTD >0) now tint
+  the VALUE via the ds-* status mechanism (`ds-kpi--status is-warn` → `.ds-kpi__value` reads
+  `var(--status)`; specificity-safe). Minor visual refinement: legacy `pr-delta-neg` gave the value
+  a warn-soft BACKGROUND block; ds tints the text only — which matches how abandon-%/bench tints
+  render on every other report (consistency, not regression). tests 132/132; JS clean; INV-16 in
+  sync. Remaining `.pr-kpi-tile` renderer: CR team tiles (script.html:7956) — bigger (per-day
+  caption + "(P1)" badge), left for a focused next increment. IR tiles (`irKpiTile`) are the most
+  complex (team-comparison + share + prior). Live verify: S32 (QCD) post-deploy.
+- **Increment 8 (DONE — milestone: all simple KPI tiles on ds-kpi):** Compare Ranges team tiles
+  (`crTeamTile_`) → `.ds-kpi`. Badge → `ds-kpi__top`; value keeps `benchValueCls_` (tint preserved
+  by #85's override); the "vs <prev> (P1)" comparison → `ds-kpi__foot`; the conditional per-day
+  caption stays as its nested `.pr-kpi-perday` line. NO more `pr-kpi-tile` emitters remain — every
+  simple KPI-tile renderer (PR/Insights/Inbound/QCD/CR + Insights queue-health) is on ds-kpi. IR's
+  richer `ir-kpi-tile` (team-avg marker + share + prior) is intentionally NOT migrated. The
+  `.pr-kpi-tile`/`.pr-kpi-value`/etc. CSS is now likely dead but LEFT in place (separate cleanup
+  sweep; `.pr-delta*` + `.pr-kpi-perday` are still used). tests 132/132; JS clean; INV-16 in sync.
+  Live verify: S17/S18 (Compare Ranges) post-deploy. On branch `claude/ds-cr-team-tiles` off main
+  (#85 merged).
+
+- **Increment 9 (DONE — cleanup + 2 migration-regression fixes):** retired the dead `.pr-kpi-*`
+  sub-class CSS (`.pr-kpi-tile`/`-row-top`/`-spark`/`-label`/`-value`/`-delta`) after every tile
+  moved to `.ds-kpi`; kept `.pr-kpi-row` (grid container) + `.pr-delta*` badges + `.pr-kpi-perday`.
+  PLUS two regressions the tile migration had silently introduced, surfaced by the cleanup audit:
+  (1) metric-glossary applier targeted `.pr-kpi-label` → repointed to `.ds-kpi__label` so KPI-label
+  hover definitions work again; (2) the 3 print page-break selectors targeted `.pr-kpi-tile` →
+  repointed to `.ds-kpi` so tiles avoid page-breaks in print/export again. tests 132/132; CSS braces
+  854/854; JS clean; INV-16 in sync. Live verify: hover a KPI label (tooltip) + Print/Export any
+  report with tiles. Branch claude/ds-prkpi-cleanup off main (#86 merged).
+
+
+- **Increment 10 (DONE — Phase 2 kickoff):** restyled the no-data empty-state to the ds-state
+  "no-data" tone (soft rounded icon TILE + display headline + muted sentence), CSS-only. Class
+  names kept (`.empty-state`/`-icon`/`-title`/`-hint`), so the shared `emptyStateHtml_` helper AND
+  the 7 static empty/unavailable surfaces (dept / QCD x2 / Inbound-unavailable / Caller-Lookup x3)
+  pick it up with ZERO markup/JS change. Chose this over renaming to `.ds-state` because the class
+  is deeply embedded (helper + 7 static elements + the reportHeadline_ anchor check) and several
+  states (Neon-down, Caller Lookup) are hard to trigger/verify. The `.status-*` inline banners +
+  error/loading/permission tones stay as-is (a fuller ds-state unification is a larger future
+  effort). tests 132/132; CSS braces 854/854; INV-16 in sync. Live verify: any empty-date-range
+  report (Missed/Individual/QCD) shows the new icon-tile empty state. Branch claude/ds-empty-state.
+
+- **Increments 11–17 (DONE — merged via PRs #87–#96, not individually logged here):**
+  the operator-feedback + Phase 2 polish wave: at-a-glance headline TONED banner
+  (`headlineTone_` + per-report `*Headline_` composers, 92%/5% good/warn/neutral);
+  Insights length-mismatch demoted from a banner to a compact `.ds-note`; glossary
+  circled-ⓘ indicator (`.gloss::after`) + styled `.ds-tooltip` replacing the
+  unstyleable native `title=` on hover; symmetric `benchValueCls_` so KPI VALUES (not
+  just chips) tint on both sides of the 92%/5% standard; date-range autocorrect
+  (`linkDateRange_` — End snaps to Start when Start passes End); modal entrance motion
+  (`ds-modal-rise`, keyed off `aria-hidden`); inline equalizer busy-indicator
+  (`.ds-loader--eq`); Overview stale-while-revalidate cache (`OV_CACHE_KEY_`, per-viewer
+  keyed). All behind the additive ds-* layer / CSS-only where possible; CLAUDE.md +
+  README synced.
+
+- **Increment 18 (DONE — Part 4 chart graceful fallback):** wrapped all 13 `new Chart(`
+  callsites in `safeChart_(target, config)` (script.html). Common path is provably
+  unchanged — when `Chart` is defined it's a transparent pass-through to
+  `new Chart(target, config)`; ONLY when the global is missing (blocked/failed Chart.js
+  CDN, SRI mismatch) does `chartUnavailable_` hide the canvas and insert an idempotent
+  `.ds-note.ds-chart-unavailable` message ("Chart unavailable — … numbers above are
+  unaffected"). Scoped strictly to the CDN-absent case; does NOT try/catch per-chart
+  render errors (that would alter happy-path control flow). `chartUnavailable_` resolves
+  the canvas from either a 2d-context target (`.canvas`) or a canvas element. tests
+  132/132; JS `node --check` clean; INV-16 in sync. Live verify: block the Chart.js CDN
+  in devtools → any report's chart slot shows the inline note, KPIs/tables still render.
+  Branch `claude/ds-chart-fallback` off main (#96 merged).
+
+- **Increment 19 (DONE — Part 5 #3 / C5: debounce + stale-token on My Dept date edits):**
+  the two `from-date`/`to-date` `change` handlers fired `refresh()` synchronously, and the
+  `linkDateRange_` autocorrect (registered LATER via `initDateRangeLinks_`) ran after that
+  refresh on the same event — so a `from > to` edit fired one wasted `getDepartmentSummary`
+  before the swap. Added a generic trailing-edge `debounce_(fn, ms)` and a monotonic
+  `summaryReqSeq` token. Date edits now go through `refreshOnDateEdit_ = debounce_(refresh,
+  350)` (rapid typing/arrow presses coalesce to one request; the 350ms trailing call reads
+  the values AFTER autocorrect ran). `refresh()` captures `myToken = ++summaryReqSeq` and its
+  success/failure handlers drop stale responses (`token !== summaryReqSeq`) so a slower earlier
+  request can't clobber a newer one. Scoped to the date-edit path; refresh-btn / dept-switch /
+  preset callers still fire `refresh()` directly (single deliberate fires), but they ALSO benefit
+  from the stale-token guard. Wired to the PUBLIC `getDepartmentSummary` (C5 — not the private
+  `computeSummary_` the design sample referenced). tests 132/132; JS `node --check` clean; INV-16
+  in sync. Live verify: type a from-date past the to-date → no flash of empty data, ends on the
+  corrected range; spam date edits → only the final range paints. Branch `claude/ds-summary-debounce`.
+
+- **Increment 20 (DONE — verification-pass refinements A, #101):** (1) Insights
+  "Different window lengths" caveat moved out of its standalone ds-note banner INLINE
+  into the "Comparing against …" line as a warn glyph + bold label, explanation now in a
+  hover tooltip (`insLengthFlagHtml_`, `.gloss` → styled ds-tooltip). (2) Insights headline
+  status tone neutralized when the two comparison windows differ by > 7 days (apples-to-oranges
+  → no false green/orange banner; sentences still render). (3) Glossary circled-ⓘ
+  (`.gloss::after`) now hidden by default, fades in on hover/focus (opacity, space reserved so
+  no layout shift). tests 132/132; CSS 895/895.
+
+- **Increment 21 (DONE — verification-pass refinements B):** (4) Universal floating Help
+  FAB (`#help-fab`, circled "?", fixed bottom-right, z-index 150 so it sits over report modals;
+  `#help-modal` lifted to z-index 200 so Help opened from the FAB renders above an already-open
+  report modal). Opens the same `#help-modal` as the header "?"; tucked away while Help itself is
+  open; hide-able via a new Settings toggle (`#help-fab-toggle`, localStorage `cdr.help.fab`).
+  (5) Modal entrance motion smoothed (rise/fade `--dur-2` 200ms → `--dur-3` 360ms, translateY
+  10→14px). (6) Inline equalizer (`DS_EQ_HTML_`) now shows on report-fetch buttons — the
+  IR/PR/CR "Loading…" and Ins/QCD "Generating…" busy states swap textContent for innerHTML with
+  the `.ds-loader--eq` span; restore paths set textContent back (clears it). tests 132/132; CSS
+  903/903; divs 608/608. Branch `claude/help-fab-motion`.
+
+- **Increment 22 (DONE — rich tooltips, #103):** styled glossary tooltip gained a
+  theme-matching accent border (`var(--accent)`), and high-value terms render a rich variant
+  (`METRIC_GLOSSARY_RICH_`): bold title + def + benchmark chip surfacing the 92%/5% standards
+  (% answered → green "≥92%"; Abandoned %/Violations → warn "≥5%"; ATT → per-call note).
+  innerHTML from dev constants only; plain title kept for SR; `show()` prefers `data-gloss-rich`
+  + toggles `.ds-tooltip--rich`. CSS 908/908; tests 132/132.
+
+- **Increment 23 (DONE — Phase 4: IR KPI tile → ds-kpi, user chose "extend then migrate"):**
+  extended the shared `ds-kpi` component with the three sub-features that had kept the Individual
+  Report tile on its own `ir-kpi-*` dialect: `.ds-kpi__value-row` + `.ds-kpi__share` (inline
+  share-of-dept tag), `.ds-kpi__compare` + `.ds-kpi__team` (the "Team X" average-comparison
+  marker row), `.ds-kpi__prior` (the INV-49 vs-prior row), `.ds-kpi__spark--inline` (top-row
+  spark), and a `.ds-kpi--ir` density modifier that preserves IR's 26px value sizing (5-up grid).
+  `irKpiTile` + both `irPriorRow_` returns rewritten onto ds-kpi; the copy-TSV handler repointed
+  to `.ds-kpi`/`__label`/`__value`/`.ds-kpi__compare .ds-kpi__team`/`__share`; glossary selector
+  dropped the now-unused `.ir-kpi-label` (`.ds-kpi__label` already covered). Bonus: IR KPI labels
+  now pick up the rich tooltips. `.ir-kpi-grid` (layout container) kept; the dead `.ir-kpi-*` tile
+  CSS left for a cleanup follow-up (increment-9 pattern). Pure client UI — no cache/aggregation/
+  invariant impact. tests 132/132; CSS 917/917; JS clean. Branch `claude/ir-tile-dskpi`. Per-agent
+  rail-card migration is the remaining Phase 4 item. Live verify: S11/S12 (Individual Report) +
+  the per-tile "Copy" TSV.
+
+- **Increment 24 (DONE — verification-pass fixes):** (1) IR "All at once" chart toggle: the
+  `.ir-tabs-allmode .ir-tab { pointer-events: none }` CSS (plus the JS `return` on tab clicks in
+  all-mode) trapped the user in all-mode — the only exit was a second toggle click. Removed the
+  pointer-events block (tabs stay dimmed 0.5 but clickable) and changed the click handler so a
+  specific-tab click exits all-mode and jumps to that chart. Relabeled the button "All at once" →
+  "ALL". (2) Insights "Team Insights": `buildTeamInsights_` gains an optional
+  `opts.excludeVolume` that drops the raw cumulative-volume insights (answered/missed counts) —
+  not comparable across windows of different lengths — while keeping the length-independent ones
+  (answer rate %, avg talk time per-call). The Insights caller passes `{excludeVolume:
+  lengthMismatch}` (INV-35). PR (never mismatches, INV-28) and CR callers pass nothing →
+  unchanged; new unit test pins both modes. tests 133/133; CSS 917/917; JS clean. Branch
+  `claude/ir-charttabs-insights-volume`. NOTE: CR also calls buildTeamInsights_ and CAN mismatch —
+  a candidate same-fix follow-up (left out to stay scoped to the operator's Insights request).
+
+- **Increment 25 (DONE — Phase 4: per-agent cards → ds-card--rail):** migrated BOTH per-agent card
+  surfaces onto the shared `ds-card--rail` (4px left status rail colored via inline `--status`).
+  Insights cards (`insBuildCard_`): improved=accent / regressed=warn / mixed=muted / floater=warn;
+  retired `.ins-card-improved/regressed/mixed/floater` + the `.ins-card` border-left (`.ins-card`
+  keeps padding as the print/layout hook). CR cards (`crBuildCard_`): improved/regressed/mixed →
+  `--status`; retired `.cr-card-*` + the `.cr-agent-card` border chrome (kept padding). `.ds-card`
+  now supplies border/radius(r-lg)/shadow-1/bg for both; print rules (`.ins-card`/`.cr-agent-card`
+  page-break-inside) + `.cr-quiet-details .cr-agent-card` opacity hook unaffected (classes kept).
+  Pure client UI — no cache/aggregation/invariant impact. tests 133/133; CSS 910/910; JS clean.
+  Branch `claude/ds-rail-cards`. This was the last headline Phase 4 item. Remaining: `.ir-kpi-*` +
+  the just-retired card dialect dead-CSS cleanup sweep; optional CR volume-insight gating;
+  `/sync-docs` pass. Live verify: S12 (Insights peer cards) + S19 (CR agent cards) — rail colors
+  match direction; floaters warn; print/quiet-collapse intact.
+
+### Where I left off
+Phase 1 confirmed in prod by the operator. Continued report-by-report migration with
+`/broad-implement` rigor: Increment 4 promoted the KPI tile to a shared `dsKpiTile_` and moved the
+Performance Report onto it (first ds-* component shared across two reports — the consolidation
+thesis realized). Tests green, syntax clean. Next candidates: migrate another report surface (CR
+length-warning → ds-banner is low-risk; remaining Insights/PR surfaces), or start Phase 2/3 quick
+wins. Still deferred/decision-gated: per-agent cards → ds-card--rail (high risk), at-a-glance
+headline → ds-banner (shared reportHeadline_ decision), C7 consolidation, C8 nav.
+PRIOR CONTEXT (still valid):
+Also confirmed access control: non-manager/non-admin domain users land on access-denied with zero
+data (Code.gs doGet + per-RPC re-auth); out-of-domain users can't reach the app. Awaiting
+commit/push/deploy direction.
+
+- **Increment 26 (DONE — redesign closeout, part 1):** (a) CR volume-insight gating: applied the
+  #105 `excludeVolume` fix to Compare Ranges — relocated its `buildTeamInsights_` call to AFTER
+  `lengthMismatch` is computed and passed `{excludeVolume: lengthMismatch}`, so a different-length
+  P1/P2 comparison drops the raw answered/missed-count insights (keeps answer rate % + ATT). (b)
+  Dead-CSS sweep: removed the now-unused `.ir-kpi-tile/row-top/label/spark/value-row/value/share/
+  row-bot/row-prior/team` rules left behind by the #104 ds-kpi migration (kept `.ir-kpi-grid`
+  container + `.ir-spark-svg`). The `.ins-card-*` / `.cr-card-*` classification rules were already
+  removed in #106. tests 133/133; CSS 900/900; JS clean. Branch `claude/cr-gating-irkpi-cleanup`.
+  Remaining closeout: `/sync-docs` pass.
+
+- **Increment 27 (NEW FEATURE — temporal abandon heatmap):** weekday × hour abandon-rate
+  heatmap sourced from `inbound_calls`, in BOTH the Inbound report and the QCD report (companion).
+  Server: `InboundReport.gs::getInboundHeatmap({department,from,to})` -- one json_agg round-trip
+  aggregating abandon rate by `ISODOW × hour-slot`, reusing `inboundResolveRequest_` (admin-only
+  vetting gate + per-dept scoping) + `inboundDeptPredicate_`; cache `inboundHeatmap:v1`. Client:
+  shared `renderAbandonHeatmap_`/`loadAbandonHeatmap_` CSS-grid render (NO Chart.js dep), color
+  pivots on the 5% standard (≤5% sage / >5% warm, `colorToCanvasRgb_` OKLCH-safe), low-volume
+  (<3 calls) muted. Inbound: `#inbound-heatmap` always loads (report is admin-only). QCD:
+  `#qcd-heatmap` companion, load gated by `USER.role==='admin'` (managers never hit the admin
+  endpoint; opens to them when the inbound gate is later removed). **TZ:** `call_start` is raw PST;
+  SQL shifts +2h (`INBOUND_HEATMAP_CST_SHIFT_HOURS`) to the dashboard CST frame -- single-constant
+  knob, NEEDS LIVE SPOT-CHECK. tests 133/133; CSS 915/915; divs 610/610; JS clean; cache-version
+  guard green. Branch `claude/abandon-heatmap`. No unit coverage (Neon SQL + client render, like
+  the inbound report itself) -- verify via S38-style live check.
+
+- **Increments 28–34 (DONE — My-Department polish + Pass-2 design update):** seven CI-green PRs,
+  all client-only (no server compute / cache / metric / permission change).
+  - #118 Missed Calls section on My Dept brought to full modal parity (shared
+    `makeMissedBucketDetail_` factory; summary strip; radar drill-in; full-width stacked).
+  - #119 Missed drill-in side-by-side (`.chart-row` grid + slide animation) + collapsible
+    queue-only / per-agent `<details>` cards (shared builders → modal gets it too).
+  - #120 Agent table: Answered/Missed stacked bar (folds Rung/Missed/Answered; E5 WoW chips
+    inline; sorts by `answerRate`, idle agents sink) + foldable detail columns (`#dept-cols-toggle`,
+    `cdr.dept.cols`). Default sort now answerRate asc.
+  - #121 Queue Call Data card moved above the agent table (below date controls).
+  - #122 `docs/design-update-pass2-review.md` — codebase validation of the Pass-2 proposal +
+    owner decisions (A2 = ratify shipped green; C3 = honest single loader).
+  - #123 **B1 change-flash**: `dsFlashChanged_` + `.ds-flash`; Overview SWR cache→live + My-Dept
+    refresh flash only changed values (never first paint; reduced-motion aware).
+  - #124 **A1 Insights triage**: "Needs attention" (regressed) → "On track" groups, regressed
+    first; partitions a COPY (never `insLastData.agentData`), parity test green; A2 rail legend.
+  - #125 **C1/C3 loaders**: signal-rings in Caller Lookup results; honest single cold-start bar on
+    Overview boot (no faked stages). QCD kept its existing equalizer button.
+  - #126 **D1a**: "Retry now" button on the Overview refresh-failing banner (Overview already kept
+    cached data on error). **C2 dropped** (charts render synchronously — no real wait to fill).
+  - #127 **E motion**: rail-card entrance fade+rise + status-rail grow-in (Insights/CR cards).
+    Count-up / segment-slide / skeleton-crossfade deferred (touch value rendering / component
+    re-arch / broad reveal rework).
+  DEFERRED Pass-2 work-streams: D1b (reports keep-last-good on error), D2 (permission tone),
+  F (digest redesign + onboarding/unmapped-queue), C2 (chart-slot spark). A3 heatmap +2h TZ is a
+  LIVE SPOT-CHECK (not a code change). A1's optional "auto-collapse On-track past 4" trimmed.
+  Where I left off: Pass-2 dashboard CSS/JS pass complete; awaiting user redeploy + the standing
+  live verifications (heatmap colors/CST, Insights chip/rail, B1 flash, A1 triage).
+
+- **Increments 35–39 (DONE — Phase 15 + deploy feedback + design packages + Tier 3):** all on
+  branch `claude/brave-dijkstra-wuonrv`; merged via PRs #131, #132 (+ Tier 3 pushed, unmerged).
+  - **Phase 15 (PR #131):** Missed Calls report per-agent timelines flipped to roster-only
+    (`getMissedCallsReport` scope 'both'→'roster') to match the now-roster-only Agent Call Metrics
+    table; queue-only abandoned section preserved (sentinels always included). Missed cards sort
+    most-missed-first + cohort-relative severity tiers (`missedQuantile_`, gated <3 agents / max<3).
+    Insights agent-card tier grouping made ALWAYS-ON (Needs attention / Mixed / Improving) instead
+    of only-when-regressed. Docs synced (scope decision rewritten roster-only, conventions.md).
+  - **My-Dept deploy-feedback polish (PR #132):** fixed the Missed radar render (was created while
+    `#dept-missed-section` was display:none → zero-size canvas; now shown before chart build);
+    QCD side card condensed + per-queue CAROUSEL (`renderDeptQcdSnapshot_`); container max-width
+    1200→1440px.
+  - **Escalations Pass 3b (PR #132):** §4 client filter (escLastResp_ copy), §5 append-only
+    `escalation_activity` table with TRUE ATOMICITY (write paths refactored to
+    `setAutoCommit(false)`+commit/rollback; activity row in same txn), §3 admin `updateEscalation`
+    (pending-only), §2 `reopenEscalation` (reason required, retains resolved_*), §1 flag-gated
+    `NOTIFY_ON_NEW_ESCALATION` full-detail email via `lookupDeptManagers_`. New endpoint
+    `getEscalationActivity` (per-dept). INV-55 + Operator State #24 updated.
+  - **Overview layout (PR #132):** STACKED layout — full-width sticky-top trend chart (CSS
+    order:-1, position:sticky top:8px z-index:5; condense-on-scroll SKIPPED per user), 4-wide dept
+    grid (responsive 4→2→1). P1 taken as HYBRID: sub-queue children stay as their own tiles (parent
+    DQE metrics are independent — nesting would falsely imply aggregation). P2.4: chart defaults to
+    top-level depts + `#ov-subq-toggle` ("+ sub-queues"). Spotlight preserved (name-based). Retired
+    the documented #8 rail; comment + CLAUDE.md updated.
+  - **Tier 3 (this /broad-implement, pushed `ddba6ba`, UNMERGED):** implemented ONLY the
+    skeleton→content crossfade (Overview boot, `ovRevealBody_` + `.ov-body-in`, fires only when the
+    loader was showing, reduced-motion no-op). DEFERRED the rest with rationale: D1b keep-last-good
+    (doc's own separate larger item, 5 reports' distinct re-fetch models, IR already does it);
+    holiday exclusion (needs holiday-source decision); condense-on-scroll (user explicitly skipped);
+    count-up/segment-slide/chart-spark (fiddly/net-new/conflicts animation:false, low value);
+    INV-42 THEME.bad (dead code, no consumer); D2 permission-tone (no real dead-ends per F11).
+  STANDING OPERATOR ACTIONS (post-deploy): run `backfillEscalationActivity()` once; decide
+  `NOTIFY_ON_NEW_ESCALATION` (PII); live spot-check a resolve/reopen (the §5 txn refactor) + the
+  Overview sticky chart + QCD carousel. Tier-1 rollout levers still open (deferred Neon mirror,
+  `DQE_READ_SOURCE=neon` cutover, uninstall `runDailyDQEBuild_` safety net, restore Inbound manager
+  access). Where I left off: Tier 3 crossfade pushed to `claude/brave-dijkstra-wuonrv` (not yet
+  PR'd); D1b (reports keep-last-good) is the recommended next focused task.
+
+- **Increment 40 (DONE — D1b reports keep-last-good):** added a per-report last-good payload
+  cache (localStorage) so a FAILED report fetch repaints the last good payload for the SAME
+  request + a non-destructive `.status-warn` "couldn't refresh — showing the last loaded report"
+  banner, instead of blanking to a hard error. Shared helpers in script.html (near `reportReqSeq`):
+  `reportSig_` (agents-sorted JSON), `reportLastGoodWrite_`/`reportLastGoodRead_` (ONE entry per
+  report, keyed per VIEWER via `reportLastGoodKey_`+USER.email per INV-39 spirit, matched by sig —
+  department is in the sig so the per-dept entitlement boundary holds), `reportFailFallback_`,
+  `reportSetStatus_`. Wired all 5 reports at every fetch call site: IR (generate + edit-apply),
+  PR (generate), CR (generate + edit-apply), QCD (generate, wrapped repaint to clear the shared
+  qcd-results-status), Inbound (generate, wrapped repaint to clear inbound-results-status). New
+  `.status-warn` tone (warn-soft) in styles.html. Audit finding: the literal "blank on re-fetch"
+  was ALREADY prevented (IR/CR edit-apply keep results; PR/QCD/Inbound only fetch from the form),
+  so the real D1b value delivered is surviving a transient backend failure / reopen. SKIPPED the
+  heavier paint-instantly-on-open SWR variant (follow-on). Pushed `claude/brave-dijkstra-wuonrv`,
+  UNMERGED. node --test 136/136; JS + CSS balance checked. Where I left off: D1b pushed, awaiting
+  PR/merge decision; remaining Tier-3 items still deferred (holidays/decision, count-up/segment/
+  spark cosmetic, INV-42 dead-code, D2 low-value); Tier-1 operational rollouts still open.
+
+- **Increment 41 (DONE — Direct-extension call metrics, Phase 1a):** NEW feature, owner-approved
+  definitions in `docs/direct-extension-metrics-design.md`. Per-agent per-day metrics for
+  direct/individual-extension calls (distinct from the queue DQE/QCD path) with the "missed while
+  on another call" carve-out. NEW cdr-import-only file `directCallMetrics.js` (NOT INV-16
+  duplicated): pure `computeDirectCallMetrics` two-pass engine (occupied/busy intervals from all
+  talk legs incl. queue+outbound → classify each in-window inbound miss as missed_busy [overlaps
+  another call's busy window + 5s wrap-up tail, ANY overlap] vs missed_free; hold counts as busy;
+  internal/external split; answer-rate rings work-window-filtered 6:30-15:00 PST but busy
+  detection isn't; outbound = activity only). 12 unit tests
+  (`tests/unit/direct-call-metrics.test.js`). `Direct Call History` sheet + Neon
+  `direct_call_history` mirror, both LAZILY created (no setup() change). Editor-run
+  `runDirectCallBuild()` computes the current Raw Data day for spot-checking. **Phase 1b NOT done
+  (deliberate):** the daily `processIntegratedHistory` is untouched — wire a best-effort block
+  there only AFTER the operator validates the numbers. node --test 148/148 (12 new); INV-16 clean.
+  Pushed `claude/brave-dijkstra-wuonrv`, UNMERGED. Where I left off: Phase 1a pushed; awaiting (a)
+  PR/merge decision and (b) operator spot-check of `runDirectCallBuild()` output before Phase 1b
+  (daily hook) + Phase 2 (dashboard modal). 5s tail = `DIRECT_BUSY_WRAPUP_SEC` (tunable).
+
+- **Increment 42 (DONE — UI polish batch + Tracks A & B):** Deploy-testing feedback,
+  multiple commits on `claude/brave-dijkstra-wuonrv` (UNMERGED past PR #137).
+  CONCRETE FIXES (shipped): queue-only abandoned cards default-collapsed on a >2-day range;
+  dept Missed radar deferred resize (CSR zero-size fix); Dept Config Save spinner; Overview
+  viewer-dept folded into the grid as a highlighted first card (hero retired); sub-queue
+  chips → expandable mini-card strips (Ans%/Abd/viol + WoW arrow, smooth height morph);
+  Source column folded into "Show all columns"; WoW "what changed" agent callout removed
+  from Overview cards (#4); inbound queue-name bridge (Dept Config `Inbound Queue Aliases`
+  col + getInboundQueueAliases_ + inboundQueuesForDept_ union — per-dept Inbound report still
+  admin-only/parked; un-gate later by populating aliases + removing the inboundResolveRequest_
+  gate). **Track A (DONE):** Missed Calls bars/radar toggle (missedChartCfg_ dispatch, mode in
+  localStorage cdr.missed.chartmode default bars), bar mode = horizontal + COLOR INTENSITY RAMP
+  + peak outline + datalabels; toggle re-render guarded to visible charts. **Track B (DONE):**
+  Escalations converted modal → full PAGE (body[data-page=escalations], setPage, route kind:'page';
+  esc-* logic + Escalations.gs unchanged). node --test 162/162; INV-16 clean; script.html JS
+  syntax-checked. PLAN doc `docs/ui-infra-roadmap.md` (Tracks A/B/C). **Track C NOT started**
+  (config sheets → Neon; phased C2 Dept Config → C1 Access Control → C3 Alert/Digest; +15-min
+  setup() hardening). Where I left off: Tracks A+B pushed UNMERGED; awaiting PR/merge decision;
+  Track C deferred (owner approved the plan, build when ready); the transient setup() timeout the
+  operator hit just needs a setup() re-run (creates Report Usage).
+
+- **Increment 43 (DONE — setup() hardening + C2 Dept Config→Neon):** On
+  `claude/brave-dijkstra-wuonrv` (UNMERGED). (1) `Setup.gs::setup()` now iterates
+  the 9 managed-sheet specs in a try/catch + `SpreadsheetApp.flush()` loop, so a
+  transient "Service Spreadsheets timed out" on one sheet logs + continues
+  instead of aborting (the operator hit this — Dept Config created, Report Usage
+  not). Idempotent re-run still completes. (2) **C2** (first config-sheet→Neon
+  migration): `CONFIG_SOURCE` Script Property (default `sheet`) switches Dept
+  Config read+write to the Neon `dept_config` table. `readDeptConfigRows_` split
+  into `sheetReadDeptConfigRows_`/`neonReadDeptConfigRows_` (neon = one json_agg,
+  sheet fallback on error); `upsertDeptConfigRow_`/`deactivateDeptConfig_` route
+  to `neon*` variants when flagged; lazy `CREATE TABLE`; editor-run
+  `backfillDeptConfigToNeon()` + `compareDeptConfigSources()` parity gate. List
+  cols stored as comma-joined text → dcParseList_ parity exact. 4 new tests
+  (`dept-config-neon.test.js`); node --test 166/166; INV-16 clean. Docs:
+  Operator State #25, INV-54 note, roadmap C2 marked SHIPPED. Where I left off:
+  pushed UNMERGED; C2 ships default-`sheet` (no behavior change until an admin
+  backfills + parity-checks + flips CONFIG_SOURCE=neon). REMAINING Track C: C1
+  Access Control (needs a NEW admin editor UI — hand-edited today, fail-closed
+  on neon error), C3 Alert/Digest (need edit surfaces), C4 Agent Alias
+  (cross-project). Branch carries the whole increment-42+43 batch, awaiting
+  PR/merge decision.
+
+- **Increment 44 (DONE — C1 Access Control editor + C3 Alert/Digest data layer):**
+  On `claude/brave-dijkstra-wuonrv` (UNMERGED). **C1 (decision + editor):** Access
+  Control is NOT moved to Neon -- auth is the hot path and the sheet (dashboard's
+  own ss) is the most always-available store, so moving it would trade reliability
+  for nothing. Instead shipped a sheet-backed admin editor (`Auth.gs`
+  getAccessControlInit / saveAccessControlRow [upsert-by-email] /
+  removeAccessControlRow [delete-by-email], all assertAdmin_ + validation +
+  LockService + auth-cache bust; managers only -- admins are in ADMIN_EMAILS).
+  Client Access modal + nav tab + route /admin/access-control. fakeSheet gained
+  deleteRow. Tests access-control-editor.test.js (+7). **C3 (data layer only):**
+  readAlertConfig_/readDigestConfig_ now read rows from the active source via
+  alertConfigRawValues_/digestConfigRawValues_ (Neon alert_config/digest_config
+  when CONFIG_SOURCE=neon, same flag as C2, sheet fallback on error, identical
+  parse). Lazy tables + backfill{Alert,Digest}ConfigToNeon + compare*Sources
+  parity. Tests config-neon-c3.test.js (+3). node --test 176/176; INV-16 clean.
+  Docs: INV-01 (AC RPCs), Operator State #25 (C3 + C1 decision), roadmap C1/C3.
+  Where I left off: pushed UNMERGED. **C3 NOT flippable yet** -- Alert/Digest are
+  hand-edited, so CONFIG_SOURCE=neon needs admin EDIT UIs in the Alerts modal
+  (the per-dept threshold/recipients table + the digest subscribers list) first;
+  those UIs are the remaining C3 work. C4 (Agent Alias, cross-project) still open.
+  Branch carries increments 42-44; awaiting PR/merge decision.
+
+- **Increment 45 (DONE — C3 edit UIs; C3 now flippable):** On
+  `claude/brave-dijkstra-wuonrv` (UNMERGED). Admin CRUD for Alert Config +
+  Digest Config in the Alerts modal, writing the ACTIVE source (sheet, or Neon
+  when CONFIG_SOURCE=neon -- same dispatch as C2). Server: Alerts.gs
+  saveAlertConfigRow/removeAlertConfigRow (key=department) + Digest.gs
+  saveDigestConfigRow/removeDigestConfigRow (key=email+dept), all assertAdmin_
+  + validation + LockService + audit log + sheet/neon writers. Client: Actions
+  (Edit/Remove) columns on both Alerts-modal config tables + add/edit forms
+  (dashboard.html) wired in initAlerts, reload via alLoadInit_. Tests
+  config-editor-c3.test.js (+7); node --test 183/183; INV-16 clean. Docs INV-01
+  (4 new RPCs), Operator State #25 + roadmap (C3 SHIPPED + flippable). Where I
+  left off: C3 fully shipped + flippable (backfill{Alert,Digest}ConfigToNeon ->
+  compare{Alert,Digest}ConfigSources clean -> CONFIG_SOURCE=neon, one flag for
+  Dept+Alert+Digest). REMAINING Track C: C4 Agent Alias Overrides (cross-project
+  pipeline read -- optional). Branch carries increments 42-45; awaiting PR/merge.
+
+- **Increment 46 (DONE — C4 evaluated, recommended AGAINST; Track C closed):**
+  Doc-only. Agent Alias Overrides is read CROSS-PROJECT by the pipeline
+  (loadRosterCanonicalNames_, line 938) in BOTH buildDQEHistoricalData.js copies
+  (INV-16 byte-identical pair) + cdr-report/DQEdrilldown.js, on the daily-build
+  canonicalization hot path; written only by the dashboard Orphan Fix modal
+  (already UI-managed). Moving it to Neon would add a JDBC read + Neon-availability
+  dependency to the daily build via a delicate two-file byte-identical edit, to
+  retire ONE small rarely-edited sheet with no hand-edit pain to solve. Same call
+  as C1: keep it on the sheet (the sheet is the right store for a pipeline-hot-path
+  always-available read). Recorded the decision in docs/ui-infra-roadmap.md; NO
+  code change. node --test 183/183 (unchanged). Where I left off: Track C closed
+  -- C2 + C1 + C3 shipped (Dept/Alert/Digest Neon-flippable; Access Control +
+  Agent Alias + logs stay sheet by design). Branch claude/brave-dijkstra-wuonrv
+  carries increments 42-46, UNMERGED, awaiting PR/merge decision.
+
+- **Increment 47 (DONE — Direct-call metrics Phase 1b + Phase 2):**
+  Phase 1b: extracted the shared core `buildDirectCallFromRaw_(ss, rawDisp,
+  configSheet, opts)` in cdr-import/directCallMetrics.js (sheet write +
+  refresh-in-window + inline best-effort Neon mirror); refactored
+  `runDirectCallBuild()` to call it; wired a 6th best-effort block into
+  `processIntegratedHistory` (autoImport.js, after the DQE block) gated on
+  rawDataSheet present, logging `processIntegratedHistory:Direct` Pipeline
+  Health rows (agents/missedBusy/missedFree/neon in notes). cdr-import-only
+  (NOT INV-16 duplicated). Phase 2: new DirectCallReport.gs
+  (`getDirectCallReport`, ONE json_build_object Neon read; per-agent answer
+  rate EXCLUDING the busy carve-out, inbound ATT, outbound activity+ATT,
+  int/ext split; admin-only-while-vetted with the per-dept manager path kept
+  intact like Inbound; cached directCall:v1, unavailable not cached). Client:
+  Direct report tab (admin-only) + #direct-call-modal + route #/report/direct
+  + CSV (dashboard.html + script.html, initDirectCallReport). Tests
+  direct-call-report.test.js (+5; gate, derived rates, null-rate, unavailable).
+  node --test 188/188; INV-16 clean. Docs: direct-extension-metrics-design.md
+  (Phase 1b+2 SHIPPED). Where I left off: Phases 1b+2 done; report is sparse
+  until history accrues. Operator: deploy dashboard + cdr-import; the import
+  starts writing Direct Call History + direct_call_history automatically. INV-44
+  step list + an INV for the Direct report are a sync-docs follow-up. Branch
+  claude/brave-dijkstra-wuonrv carries increments 42-47, UNMERGED.
+
+- **Increment 48 (DONE — Direct-call metrics Phase 3: bulk-backfill history):**
+  Bulk path now builds Direct history for past dates (DQE skipNeon + end-pass
+  upsert pattern). autoImport.js: histDateCache.direct (col B) + existsInDirect
+  + willBuildDirect (its OWN gate, NOT willBuildDQE -- old dates with DQE but no
+  Direct must still write Raw Data) + needsRawDataWrite widened; bulk branch
+  builds the sheet per date via buildDirectCallFromRaw_({skipNeon:true}),
+  unconditional (Option A, gated on willBuildDirect), logs bulkBackfill:Direct
+  Pipeline Health; force-path clears the direct cache flag; bulk-complete
+  reminder added. directCallMetrics.js: extracted shared dcUpsertRows_(conn,rows)
+  (INSERT...ON CONFLICT template + per-row bind) used by BOTH writeDirectCall-
+  RowsToNeon_ (single-date) and the new editor-run backfillDirectCallToNeon_
+  (one connection, batched, resumable via DIRECT_UPSERT_RESUME, DIRECT_UPSERT_
+  SINCE date floor) -- cdr-import-local (no cross-project move). Tests
+  direct-call-backfill.test.js (+4: one-conn/per-row dates/ON CONFLICT, date
+  floor, missing-sheet+unreachable no-op, single-date refactor parity). node
+  --test 192/192; INV-16 clean (directCallMetrics.js + autoImport.js are
+  cdr-import-only). Docs: direct-extension-metrics-design.md (Phase 3 SHIPPED +
+  runbook). Operator: after a bulk rebuild run backfillDirectCallToNeon() in the
+  CDR Import editor (DIRECT_UPSERT_SINCE to scope); recommended only after the
+  carve-out numbers are vetted. INV-44 step list (bulkBackfill:Direct) is a
+  sync-docs follow-up. Branch claude/brave-dijkstra-wuonrv carries 42-48, UNMERGED.
+
+- **Increment 49 (DONE — R12: UI-audit Phase 1 fixes, commit 64cd132):** A
+  rendered-harness UI/UX audit (scratchpad-only tooling: real client
+  script/styles/markup + payloads computed by the REAL server code via the
+  unit-test vm harness over fixture sheets, driven in headless Chromium at
+  1440/1024/768/390, light+dark, admin+manager) found 7 issues on
+  Overview + My Department; all fixed + harness-verified. R12-1 (BUG): missed
+  chart never instantiated when refresh() ran during the Overview landing --
+  the MC2 create-while-hidden guard exhausts 30 rAF attempts vs the
+  display:none dept page and nothing re-armed on entry (blank until manual
+  Refresh); setPage's dept branch now re-draws from deptMissedLastData when
+  no instance exists (likely the true root cause under the R10-7/R11-B6
+  band-aids). R12-2 (BUG): colorToCanvasRgb_ fillStyle-readback does NOT
+  canonicalize oklch in modern browsers (serialized back verbatim) -- THEME
+  carried oklch strings, parseColorRgb_ fell to gray, so every R11-L trend
+  arrow rendered gray; non-rgb/hex readbacks now resolve via 1x1 getImageData.
+  R12-3: .header-meta wraps <=640px + .ov-user-table-wrap overflow-x:auto ->
+  0px page overflow at 390/768 (was 290px pan). R12-4: ovPeriodStats_ shows
+  the no-data dash when rung===0 (was a catastrophic-looking "0.0%
+  answered"). R12-5 (a11y): both agent tables' sort headers keyboard-operable
+  (tabIndex + Enter/Space) + aria-sort. R12-6 (a11y): header nav dropped
+  role=tablist/tab -> aria-current="page" (updateTabActiveState_); Overview
+  chart toolbar role=group + aria-pressed metric buttons. R12-7 (a11y):
+  .ir-sort-control select keeps a visible focus ring. npm run ci 452/452 +
+  INV-16 clean; harness regression sweep: 0 console errors, 0 overflow,
+  manager admin-leak check clean. Clean audit results worth keeping: contrast
+  >=4.5:1 AA both modes; focus order logical; 92% boundary tint exact.
+  Follow-ons (NOT done): S4 dead #mock-banner relic; IR modal's real
+  role=tab set lacks tabpanel/arrow-key wiring (out of Phase-1 scope);
+  R6 default Zoom:Full dead space (owner call); audit Phase 2 (Insights page
+  or modals+Escalations) not started. Docs: fix-history R12 entries +
+  CLAUDE.md INV-42 note are a sync-docs follow-up. Where I left off: R12
+  committed+pushed on claude/broad-scan-ak8g04 (ahead of merged PR #199),
+  no PR opened yet; operator deploy of the dashboard pending.
+
+- **Increment 50 (DONE — R12 batch 2 + audit Phase 2, commit a6f7b56):**
+  Batch-2 fixes: R12-8 mock-banner relic removed (markup+CSS+dead meta.mock
+  check); R12-8b Overview chart zoom DEFAULTS to Fit (owner via R6; persisted
+  cdr.ov.axiszoom; static markup label synced); R12-9 IR modal chart tabs
+  completed as a real APG tabs pattern (inner role=tablist wrapper w/
+  display:contents so the mixed toolbar keeps layout; aria-controls + roving
+  tabindex anchored to irActiveChartTab; role=tabpanel + aria-labelledby;
+  Left/Right/Home/End move+activate). Harness-verified (Fit axis 83-97;
+  ArrowRight activates+focuses; no page errors); CI 452/452. AUDIT PHASE 2
+  (Insights page; audit-only, no fixes): auto-run, density Simple/Detailed
+  (chart-trap avoided; Simple forces trend chart AND instantiates visible),
+  popover+advanced, period bar, calendar v2 (month pagination), manager
+  gating (no ATT option / AB panel / heatmap; role-default Simple) ALL
+  CLEAN; zero console errors. Findings (unfixed): I-1 .ir-results-header 4px
+  page overflow (every viewport); I-2 R11-J A/B VIEWS panel occludes chart/
+  calendar data when expanded at 1440x950 (suggest default-collapsed or
+  persisted collapse); I-3 390px Agents toolbar clips (sort label cut,
+  Cards/Chart + basis segments unreachable without undiscoverable horizontal
+  scroll); I-4 (polish) trend Metric dropdown floats detached center-chart.
+  Harness lesson: fullPage screenshots race Chart.js re-layout (viewport
+  clips are the truth). Where I left off: batch 2 pushed on
+  claude/broad-scan-ak8g04; Phase 2 findings awaiting owner pick; no PR
+  opened for R12 batches yet; dashboard deploy pending.
+
+- **Increment 51 (DONE — R12 batch 3: Insights Phase-2 fixes, commit 4a30a81):**
+  R12-10 (I-1) Insights sticky header 4px viewport bleed -> spread-shadow
+  bleed (0px overflow everywhere now); R12-11 (I-2) admin A/B VIEWS card
+  defaults COLLAPSED + persists (cdr.ins.abpanel) so it can't occlude
+  chart/calendar data unnoticed; R12-12 (I-3) Agents toolbar wraps <=700px
+  (was clipped at 390 with segments unreachable); R12-13 (I-4) trend Metric
+  dropdown relocated into .ins-trend-headctl beside Monthly/Daily +
+  Line/Calendar (headctl now an explicit wrapping flex row; export onclone
+  hides it by id, unchanged). Harness-verified: 0px overflow 1440+390,
+  collapse persistence round-trip, toolbar within viewport, no page errors;
+  CI 452/452. Where I left off: R12 batches 1-3 all pushed on
+  claude/broad-scan-ak8g04, NO PR yet; /sync-docs pending for R12-1..13
+  fix-history entries + INV-41/42 oklch note; dashboard deploy pending;
+  remaining audit phases (modals beyond IR, Escalations page) unstarted.
+
+- **Increment 52 (DONE — audit Phase 3: Escalations + admin modals; AUDIT ONLY,
+  no fixes):** Harness extended with a fake JDBC conn (escalation rows +
+  aggregates) + real-server payloads for esc-init/list/activity, alerts-init,
+  digests-init, queuereport-init, orphan-init, deptconfig-init, access-init,
+  health, ui-flags. CLEAN: Escalations page admin+manager (cat-menu counts,
+  health band, review chip, filter, + New escalation admin-only,
+  single-dept manager gets the NAME-TEXT dept control, zero data-admin-only
+  leaks, 0px overflow 1440+390); all six admin modals aria-modal + labelled,
+  Escape closes all, panels fit viewport, content renders (Orphan Fix showed
+  the Jon Smyth orphan + datalist mapping correctly); zero console errors.
+  FINDINGS (unfixed): P3-1 (MED, root-caused) trapFocus_'s FOCUSABLE query
+  doesn't exclude HIDDEN elements, so the first/last wrap never fires in
+  modals whose last focusable node is display:none (collapsed edit forms) --
+  Tab ESCAPES Orphan Fix (21/25 presses), Dept Config (18/25), Health
+  (15/25) while Alerts/Access/Caller trap 0/25; fix = filter els to visible
+  (offsetParent) inside the keydown handler, repairing every modal at once.
+  P3-2 (LOW, owner call): the Escalations 'All' view repeats the full
+  expanded resolution form on every open card -- a disclosure would compact
+  the list. P3-3 (INFO) hidden status divs retain their 'Loading...' text
+  after success (DOM-only, not visible). Harness limits: write flows +
+  Caller Lookup search + modal drag/resize not exercised. Where I left off:
+  Phase 3 findings awaiting owner pick; R12 batches 1-3 still un-PR'd;
+  /sync-docs pending (R12-1..13); dashboard deploy pending.
+
+- **Increment 53 (DONE — R12-14 + docs sync + PR #200 MERGED, 4a65632):**
+  P3-1 fixed (trapFocus_ filters to VISIBLE elements; 0/25 escapes on all
+  modals, was 21/18/15 on Orphan/DeptConfig/Health; P3-3 skipped as
+  invisible-DOM-only, P3-2 left as an owner call). Docs synced: CLAUDE.md
+  OKLCH gotcha (R12-2 readback caveat + pixel-readback rule), Fit-default
+  zoom in the Overview trend bullet, cdr.ov.axiszoom + cdr.ins.abpanel in
+  the prefs bullet; fix-history R12-1..R12-14 block. Branch rebased onto
+  main, PR #200 (all R12 work) MERGED. Where I left off: everything merged;
+  OPERATOR: deploy the Department Dashboard (clasp push -f -> new version)
+  to ship R11-M/N + R12; the audit's remaining owner-call items: P3-2
+  (Escalations 'All' view repeats full resolution forms) + heatmap live
+  spot-check; audit phases 1-3 complete, no further phases queued.
+
+- **Increment 54 (DONE — suggestions #1-7 + empty-state sweep + docs, commits
+  c6ecd65/1e0dc20/2ad6a58/+this):** Harness committed as tools/ui-harness
+  (portable paths, README). R12-15 esc resolve disclosure; R12-16 compact
+  rows (-31%); R12-17 QH promoted (Simple-hide preserved); R12-18 short-
+  viewport sticky slimming; toasts on all six esc verbs; R12-19 unified
+  Overview Window bar per the owner's 5 rulings (cdr.ov.window, chart
+  labeled Chart:, yesterday-only agents caption, WoW tooltip explainer,
+  zero-ring no-data note); R12-20 getEscalationsBadge (read-only, scoped)
+  -> nav badge + Overview strip; R12-21 empty-state sweep (role-aware dept
+  hint, esc inflow context, tour text; other states audited healthy).
+  Docs synced (INV-55 callable, prefs keys, density bullet, fix-history
+  R12-15..21). All harness-verified; CI 452/452 throughout. Where I left
+  off: ~8 commits ahead of main un-PR'd; dashboard + cdr-import deploys
+  still pending; next natural steps: PR+merge, deploy, regenerate harness
+  payloads after any server-shape change.
+
+- **Increment 68 (DONE — view-as harness coverage + /sync-docs, commits
+  cc4ce43/+this):** `drive-smoke.js` now exercises VIEW-AS-MANAGER (28 checks):
+  enters preview, hides the admin-only surfaces measured as RENDERED
+  visibility rather than a class, reverses cleanly, throws nothing. That
+  closes the second of the two follow-ons from increment 67; the first (drop
+  `continue-on-error` from the `ui-harness` CI job) shipped in 35c80b3, so the
+  gate is BLOCKING now.
+  **/sync-docs found one substantial class of drift and it was all the same
+  shape:** the sub-queue scope switcher was retired in a4d9673 and the HEAD of
+  each doc entry was updated while the TAIL was not, so CLAUDE.md and
+  docs/client-ui-conventions.md each contained two entries contradicting each
+  other about whether the tabs exist. Fixed in CLAUDE.md (chip placement, the
+  banner/tooltip paragraph rewritten as the lesson it actually taught, the
+  Phase 3 missed-section rule now describing the group-header override that
+  drives it, and the false "no automated coverage for any CSV writer" claim
+  which its own harness paragraph contradicted), client-ui-conventions (the
+  whole "Sub-queue scope switcher" section + the missed-section rule),
+  regression-scenarios S35 (its addendum instructed an IMPOSSIBLE step — "set
+  the switcher to `<dept> only`" — and now also states the crossover-de-dup
+  exception to counts summing), operator-state (switcher phrasing), and
+  script.html (stale jsdoc + a dead `var scope`). Also documented
+  `sampleQueueSplitCallIds()` + its three Script Properties under Op State #41
+  (it was in active owner use but undocumented), and added fix-history
+  R12-22c/R12-22d for the queue-report email changes.
+  CI 593/593; ci:ui 24+16+31. Where I left off: PR opened and merged.
+  OPERATOR: the Department Dashboard deploy for the email + client changes is
+  still pending. Next: Phase 3 (Missed, `missed:v18`) and Phase 4 (IR/Insights,
+  `insights:v20`) of the queue split are still all-queue; the Insights combined
+  view is unstarted; theme/mode toggles and the Export dropdown beyond the CSV
+  item still have no automated interaction.
+
+- **Increment 69 (DONE, MERGED + DEPLOYED — O-9, the queue-report email sent
+  nothing and reported success, commits c2d715f / PR #213):** Owner reported
+  the Daily Call Queue Report never arrived after enabling it. Arming the
+  trigger without adding a subscriber row produced a run where
+  `sendQueueReportForDate_` returned `count:0` with no failures — which fell
+  into `runDailyQueueReport_`'s SUCCESS branch, wrote `Sent <iso> to 0
+  subscribers`, and claimed the dedupe marker. The modal prints that verbatim
+  and the Health classifier painted it GREEN (it matches none of the
+  fail/error/skipped bad-words nor the MISSED/GAPS prefixes), so the engine
+  reported success every weekday while nobody received anything. Fixed three
+  ways: recipients resolve BEFORE the report is composed (returning
+  `noRecipients`, and no longer paying the all-dept compute on ~12 polls per
+  window); the runner writes `NO-SUBSCRIBERS <iso>` and does NOT claim the
+  marker (so a subscriber added at 8am still gets that morning's report — the
+  FAILED-ALL rule: nobody received it, so a retry can't duplicate); and the
+  modal warns BEFORE the first morning when the trigger is installed with zero
+  active rows. Plus the `^NO-SUBSCRIBERS` arm on the Health classifier. Same
+  family as F5 and O-7: a no-op does not get to look like work.
+
+- **Increment 70 (DONE, PUSHED, NOT MERGED — O-10 gate check + O-11 dev
+  overlay, commits cafa4cb / b11fd1b):**
+  **O-10** — `runQueueReportGateCheck` (admin-gated, READ-ONLY, button in the
+  Alerts modal). Every non-send path in the trigger returns SILENTLY:
+  disabled / outside-window / weekend / holiday / already-sent / not-ready
+  write nothing anywhere, and the entry point is `_`-suffixed so the editor Run
+  picker hides it too — so each hypothesis cost a day to test. It reports every
+  gate INPUT beside the decision plus the next window and which date THAT run
+  targets. Verdict logic split into a pure `queueReportGateExplain_` (the
+  `queueReportGateDecision_` precedent) because the interesting branches are
+  the ones a wall-clock test can never reach. `wouldSend` folds in the
+  recipient count — a subscriber-less "ready" is the O-9 bug in a new hat.
+  **O-11** — the admin-only dev overlay (`#dev-overlay`, Ctrl/Cmd+Alt+D or
+  `#/dev`, `cdr.dev.overlay`): captured client errors, `google.script.run`
+  timings/failures, app state, and a REGISTRY of admin-gated server
+  diagnostics (a new one costs one line). Owner chose the full scope over three
+  narrower options. Security shape: presentation only, the `role==='admin'`
+  check is COSMETIC (a localStorage flag is not authentication), every
+  diagnostic keeps its own `assertAdmin_`, app state is identifiers/flags never
+  a payload. **A real bug shipped mid-increment and the new driver caught it:**
+  `google.script.run` is a getter returning a FRESH, STATEFUL runner per
+  access; the first draft captured one at install time, leaking chain A's
+  handlers into chain B. Identity-comparing two reads does NOT detect it (a new
+  Proxy is minted either way) — the check had to be behavioural, and the buggy
+  build reports `BB`. New `drive-devoverlay.js` (14 checks) is in the ci:ui
+  gate and asserts the app still WORKS with the probe installed before
+  asserting anything about the panel.
+  CI 601/601; ci:ui 28+16+31+14.
+
+  **WHERE I LEFT OFF / DO THESE FIRST IN A FRESH SESSION:**
+  1. `cafa4cb` + `b11fd1b` are pushed to `claude/sync-commands-dnxgcv` but NOT
+     PR'd and NOT merged. Open a PR and merge (owner has approved this pattern
+     each round, but ask — the standing rule is no PR unless asked).
+  2. Then DEPLOY the Department Dashboard (`clasp push -f` from repo root → new
+     deployment version). O-9 is already deployed; O-10 + O-11 are not.
+  3. **Monday morning (Aug 3): confirm the queue report actually sends.** Its
+     target is FRIDAY Jul 31, so Friday's raw data must be imported before
+     noon Central. If it doesn't arrive, the new "Why hasn't it sent?" button
+     answers it in one click. NOTE the Thursday Jul 30 report will never send
+     automatically — its window closed, and the pre-O-9 code already claimed
+     the dedupe marker for that date; deliver it with "Send to subscribers…".
+  4. **Operator State #40 — the per-queue-split backfill window is CLOSING.**
+     `Call_Legs` is pruned at 14 days and per-leg queue identity exists nowhere
+     else, so every day this is not run is a day that can never be split.
+     Highest-urgency operator item outstanding.
+  5. Regression scenarios still not walked live: S2 (admin switches
+     departments — the one that would have caught the dept-selector bug), S4,
+     S6, S35, S43.
+
+  **STILL OPEN (unstarted, no work in progress):** Phase 3 (Missed,
+  `missed:v18`) and Phase 4 (IR/Insights, `insights:v20`) of the queue split
+  are still all-queue; the Insights combined view is unstarted; the theme/mode
+  toggles and the Export dropdown beyond its CSV item still have no automated
+  interaction coverage (the same gap class that hid the dept-selector bug).
+
+- **Increment 71 (DONE — broad-scan findings S2-0 / B-1 / B-2 / S2-2; block:
+  `.cycle/blocks/71-S2-0-B-1-B-2-S2-2-broad-implement.md`):** A /broad-scan
+  audit (stages 1-3) found four issues; the owner selected these four to fix.
+
+  **S2-0 is the one that changes behavior.** `applyQueueSplitToRows_` is called
+  from exactly ONE place (`computeSummary_`), so the Phase-2 queue narrowing
+  reached My Department + the manager digests while Overview, Insights, IR,
+  Missed and the low-answer-rate ALERT engine all kept reporting all-queue
+  figures for the same dept and window. A manager comparing the Overview tile
+  to the My Department totals saw two different answer rates with nothing
+  explaining why, and the alert threshold was evaluated on a different number
+  than the dashboard displayed. Now gated on the `QUEUE_SPLIT_SCOPE` Script
+  Property, **default 'off'** — so all six surfaces agree again, at the price
+  of restoring the crossover over-count on Sales / CSR / Power (the pre-Phase-2
+  state, and the chip says so). The gate sits INSIDE the function so Phases 3/4
+  inherit it. Flip to 'dept' only once every DQE surface narrows.
+
+  **B-1** added fail-open #4: the dept has mapped queues and the rows have
+  splits, but no queue name observed across the window matches the dept's list
+  — a name-space config fault (queuesForDept_ returns QCD-canonical
+  `A_Q_CustomerSuccess`, splits carry raw `A_Q_CSR`), which used to render the
+  department as ZERO with every chip silent. Now rolls the window back to its
+  all-queue figures and says so. Assessed per WINDOW not per row, because one
+  row matching nothing is legitimate and failing open there would re-introduce
+  the bug Phase 2 exists to fix.
+
+  **B-2** cut the last three DQE readers over to the DAL — `alertRowsForDate_`,
+  `computeDigestWowDriver_`, `computeOrphans_` — after the docs had claimed for
+  some time that ALL readers were cut over. The alert one was the dangerous
+  member: the claim is what justifies trimming the sheet, and a
+  present-but-aged sheet returns zero rows for yesterday, so every dept logs
+  `no-data` and the alerts stop firing behind a full, plausible-looking Alert
+  Log. A new cross-file tripwire now fails CI if a dashboard `.gs` reads
+  `SHEETS.HISTORICAL` without a Neon path (verified against HEAD: it flags
+  exactly those three).
+
+  **S2-2** guarded the CSR force-rebuild path. `guardForceRebuildLoss_`'s
+  exemption list is keyed on "is this sheet dashboard-read" — true of CSR
+  Transfer until R10-5 made it dashboard-read and nobody revisited it, so a
+  force re-import producing zero CSR rows deleted that date silently.
+
+  CI 610/610 (+9 tests) + INV-16 clean. `npm run ci:ui` could NOT run —
+  playwright will not install in this container and script.html was modified;
+  the blocking `ui-harness` CI job covers it on the PR.
+
+  **WHERE I LEFT OFF / DO THESE FIRST IN A FRESH SESSION:**
+  1. Nothing is committed or pushed yet — 10 modified files on
+     `claude/broad-scan-c9r2z7`. Commit, push, open a PR (ask first; the
+     standing rule is no PR unless asked).
+  2. Confirm the `ui-harness` CI job goes green — it is the only coverage of
+     the `subqSplitChip_` change.
+  3. **DECIDE on QUEUE_SPLIT_SCOPE before deploying.** Unset = 'off' = the
+     consistent state. Do NOT set 'dept' until Phases 3/4 + Overview + Alerts
+     narrow too.
+  4. /sync-docs is needed: CLAUDE.md's queue-split bullets and INV-30 still
+     read as though narrowing is unconditional, and QUEUE_SPLIT_SCOPE needs an
+     Operator State item. (The two FALSE claims — the DQE read-back cutover and
+     the CSR guard exemption — were corrected in this session.)
+  5. Deploy BOTH projects: dashboard (Data/script/Alerts/Digest/OrphanFix/
+     NeonRead) and cdr-import (autoImport).
+  6. Unresolved from the audit sweep, not touched: `deleteOldCDRSheets` has no
+     caller, no menu item and no installer in the repo, yet the ~14-day
+     Call_Legs retention it enforces is what Operator State #40's urgency and
+     IMP-11's "pruned = permanent loss" both rest on. Check the cdr-import
+     Triggers panel.
+  7. Operator State #40 (queue-split backfill window) is still open and still
+     closing — unaffected by this session, since the pipeline still WRITES the
+     split; only the dashboard's use of it is gated.
+
+  **REMAINING AUDIT FINDINGS, not selected:** S2-1 (sub-queue group header is
+  announced as a button but ignores Enter/Space, and carries the `role="button"`
+  S39 explicitly forbids on table rows), B-3 (digest/alert outcomes missing
+  from the Health page; zero-subscriber digest records `ok`), B-5 (sentinel
+  rows bypass the work-window filter), B-6 (combined-view meta describes only
+  the primary dept), plus the small dead-code list in the block file.
+
+- **Increment 72 (DONE — CLAUDE.md extraction pass + three process guards;
+  block: `.cycle/blocks/72-claude-md-extraction-broad-implement.md`):** The
+  owner asked whether CLAUDE.md needs a second split. **Answer: no, and a
+  split would have been the wrong fix.** The measurement is what settled it —
+  372 KB → 150 KB at the F8 split, back to 178 KB in seven days; 51 → 53
+  bullets, but only ~3 KB of that from the two NEW bullets and ~10 KB from
+  EXISTING ones growing. Splitting again would move weight without touching
+  the mechanism that produces it, and would buy roughly a week.
+
+  **What shipped instead: one extraction pass plus three things that make the
+  growth visible per commit.**
+
+  **Extraction (5 of the 8 biggest bullets).** Inbound capture 17.5 → 12.8 KB;
+  role model; Neon write discipline; System Health; deferred Neon mirror. The
+  rule in each case survives verbatim — what left is chronology (how a defect
+  was found, which increment fixed it, what four explanations were eliminated),
+  and every fix code cited already had a `docs/fix-history.md` entry, which is
+  what made this deletion-of-duplicate rather than relocation. **I verified
+  that BEFORE editing, and it is the single fact that made the edit low-risk.**
+  One entry was not narrative but STALE — a "future lever" that had since
+  shipped as the deferred mirror. The 3 remaining top-8 bullets (coercion 3.8
+  KB, direct-extension metrics 4.8 KB, read-back 5.6 KB) were assessed and
+  deliberately left: on close reading they are rule, not padding, and the
+  coercion one is the most safety-critical gotcha in the file.
+
+  **The honest number: 178.1 → 171.7 KB, only −6.4 KB.** That is the finding,
+  not a disappointment — the bullets are mostly genuinely rules, so extraction
+  is not the lever. The ratchet is.
+
+  **Suggestion 2 (the durable one): a per-bullet RATCHET in
+  `claude-md-split.test.js`.** New Common Gotchas bullets must be under 4 KB;
+  the five already over are grandfathered at measured size and may only
+  SHRINK. The 200 KB cap is a CLIFF — it fires on whoever adds the last
+  paragraph, not on whoever grew a bullet over six weeks. Negative-tested in
+  both directions.
+
+  **The ratchet fired on its own author, and the resolution is recorded in the
+  test.** Restoring three pointers the loss-checker caught pushed the inbound
+  bullet past its seeded size; I shaved unrelated prose three times before
+  recognising the seed was a MID-EDIT snapshot, not a real previous size. Two
+  lessons, both in the test comment: seed from a FINISHED state, and shaving
+  unrelated prose to satisfy an arbitrary number is the ratchet causing exactly
+  the damage it exists to prevent.
+
+  **Suggestion 1** added the Round-14 fix-history family (S2-0, B-1, B-2,
+  S2-2) so THIS session's commits don't create the drift the pass cleans up.
+  **Suggestion 3** added CHECK 5 (doc weight) to `/sync-docs`, with an explicit
+  counter-instruction — never propose deleting a RULE, and verify every dropped
+  reference still resolves — because this check's failure mode is the opposite
+  of the other four's. **Suggestion 4** put a "how to write one" note atop
+  Common Gotchas carrying the measured evidence and three habits, the
+  load-bearing one being: **write the bullet ONCE at the END of a phased
+  rollout.** Amending per phase is what produced the biggest bullets — the
+  sub-queue work alone added ~12 KB across six commits.
+
+  **The real risk in this edit was not a broken build but quietly deleting a
+  load-bearing sentence**, so it was checked mechanically rather than by eye: a
+  scratch token-loss guard extracts every fix code, INV-/S-/Operator-State
+  reference, backticked identifier and Script Property from the BEFORE text and
+  asserts each dropped one still resolves somewhere in the live doc set. It
+  caught three genuine losses — `REPORT_USAGE_SCAN_CAP_`,
+  `ncMissingTableError_`, `clChainHtml_`/`minDate` — all restored as compact
+  pointers. Final whole-file run clean.
+
+  CI 612/612 (+2), INV-16 clean, F8 split guard green. No `apps-script/` file
+  changed — **nothing to deploy from this increment.** NET 0 − 0 = 0,
+  deliberately: a documentation-and-process change is not a bug fix, and
+  scoring it otherwise would inflate the tally the reflect step exists to keep
+  honest.
+
+  **Also closed this session (items 1 and 4 of increment 71's list):** commits
+  `f6b5113` (the four findings), `6fec21a` (/sync-docs — the queue-split
+  bullets, INV-30, Operator State #42 and the plan doc all now describe the
+  gate) and `3b28a2a` (this pass) are pushed to `claude/broad-scan-c9r2z7`.
+  **No PR opened — the standing rule is none unless asked.**
+
+  **WHERE I LEFT OFF:**
+  1. Three commits pushed, working tree clean, no PR. Confirm the `ui-harness`
+     CI job is green — `script.html` changed in `f6b5113` and playwright will
+     not install in this container, so that job is its only coverage.
+  2. **`QUEUE_SPLIT_SCOPE` must stay unset ('off') until Phases 3/4 + Overview
+     + Alerts narrow too.** Unset is the consistent state; see Operator State
+     #42 for what each mode makes the numbers mean.
+  3. Deploy from increment 71 is still pending: dashboard (Data / script /
+     Alerts / Digest / OrphanFix / NeonRead) **and** cdr-import (autoImport).
+  4. **Operator State #40 (queue-split backfill) is still closing** — the
+     ~14-day `Call_Legs` window is unaffected by any of this session's work,
+     since the pipeline still WRITES the split.
+  5. `deleteOldCDRSheets` still has no caller, menu item or installer in the
+     repo — check the cdr-import Triggers panel (see increment 71 item 6).
+
+  **NEXT, in the order I'd take them:** Key Design Decisions (40.4 KB, 23% of
+  the file) got no extraction pass and has the same shape — it is the obvious
+  next target, and the ratchet does not cover it. Then the unselected audit
+  findings S2-1, B-3, B-5, B-6, and the dead-code list (`escRowDepartment_`,
+  `yesterdayIso_`, `typeOfCell_`, `pullReportData`, plus five `_`-suffixed
+  diagnostics wanting Run-picker wrappers). Growth rate remains the thing to
+  watch: −6.4 KB buys about a week and a half at the observed ~4 KB/day.
+
+- **Increment 73 (DONE — Key Design Decisions extraction; ratchet extended to
+  both prose sections):** The follow-on named at the close of increment 72.
+  **40.4 -> 33.7 KB** (CLAUDE.md 171.7 -> 164.9 KB), a bigger proportional cut
+  than the Common Gotchas pass (-17% vs -6%), and for a reason worth carrying
+  forward.
+
+  **The largest win was deleting DUPLICATION, not condensing prose.** Four
+  paragraphs of the sub-queue bullet — the relationship bar, the IR/Insights
+  picker groups, the combined CSV, the missed section's scope — were already
+  written, in more detail, in `docs/client-ui-conventions.md`, the file
+  CLAUDE.md instructs you to read before touching `script.html`. Neither copy
+  was wrong; the F8 split had moved the client conventions out and the bullet
+  kept growing its own version alongside. That bullet went 10.8 -> 7.5 KB by
+  becoming a pointer plus the three rules that are load-bearing SERVER-side.
+  **Check the split files for an existing home before condensing a paragraph
+  — the duplicate may already be better written than what you are editing.**
+
+  Also extracted: the top-tab router's flattened-then-re-collapsed nav history
+  (only the net state matters); the agent table's column-by-column change log;
+  Phase E's three "shipped in commit X" paragraphs, each of which has its own
+  home; the scope toggle's retirement chronology; and the three Overview
+  banners' repeated gating/best-effort boilerplate, now stated once.
+
+  **Two things deliberately kept, both against the instinct to cut.** The
+  `E2`/`E3`/`E4`/`E9` codes stay attached to their affordances because they
+  appear in code comments across five files. And the Source-column bullet
+  still documents machinery that never renders in the My-Dept table — it is
+  not dead code, the IR picker and Diagnostics use it, so the bullet now leads
+  with that instead of trailing a NOTE that contradicts its own opening.
+
+  **One lesson was relocated rather than deleted:** "a control whose only state
+  is a class is a control with no state" existed NOWHERE but CLAUDE.md, so it
+  moved to `docs/client-ui-conventions.md` with the assertion rule it implies
+  (read the rendered effect, not the class name). The token-loss guard is what
+  distinguishes that case from the deletable ones.
+
+  **The ratchet now covers BOTH prose sections.** Leaving Key Design Decisions
+  uncovered would have watched one growth surface while the other regrew
+  freely. Only ONE bullet in the section exceeds the 4 KB budget after the
+  pass, so the same constant works unchanged. Negative-tested both directions.
+  A small lesson recorded in the test: seed a grandfathered size from THAT
+  test's own failure message, not a side script — mine trimmed trailing
+  whitespace differently and was off by one byte.
+
+  Guard results: `npm run ci` 612/612, INV-16 clean, whole-file token-loss
+  check clean apart from five ALL-CAPS prose words the regex misreads
+  (FOLDED / HEADING / RESETS / ROUND / SETUP — each verified by hand to be
+  emphasis in a comment, not a constant). **No `apps-script/` file changed —
+  nothing to deploy.** NET 0 − 0 = 0, same reasoning as increment 72.
+
+  **A process note on my own error:** I reverted the test file with
+  `git checkout` while cleaning up a negative test, discarding unstaged work.
+  The negative-test output had already been captured, so the verification
+  stands and the edits were re-applied — but use a scratch copy for
+  break-it-on-purpose checks rather than `git checkout` on a dirty file.
+
+  **WHERE I LEFT OFF — increments 71-73 are MERGED TO `main`.** PR #215
+  (`c4e5ecd`) landed all six commits: the four audit findings, the /sync-docs
+  pass, and both CLAUDE.md extraction passes. **Both CI jobs passed, so
+  `ui-harness` is confirmed green** and that item is CLOSED — as is
+  "drop `continue-on-error` from the ui-harness job", which was already done
+  before this session and lingered in older notes. `claude/broad-scan-c9r2z7`
+  has been restarted from `main`; do NOT reuse PR #215.
+
+  **Three things are still open and none of them is code:**
+  1. **DEPLOY — this is the gating step, and it is TWO projects.** cdr-import
+     (`autoImport.js`) and the dashboard (`Data.gs`, `script.html`,
+     `Alerts.gs`, `Digest.gs`, `OrphanFix.gs`, `NeonRead.gs`). The dashboard
+     needs a **new deployment version**, not just `clasp push -f` (Operator
+     State #2); `scripts/deploy.sh <dir> <deployment-id>` does both.
+  2. **Operator State #40 — the queue-split backfill, still on a clock.**
+     `Call_Legs` is pruned at 14 days and per-leg queue identity exists
+     nowhere else, so every undeployed day is permanently unsplittable. Deploy
+     cdr-import, then force re-import the surviving dates. This is the only
+     item with a deadline.
+  3. **Leave `QUEUE_SPLIT_SCOPE` unset.** Unset = `off` = the consistent
+     state, where all six DQE surfaces agree. See Operator State #42.
+
+  Also unverified: the `deleteOldCDRSheets` trigger (no caller, menu item or
+  installer exists in the repo, yet the 14-day retention it enforces is what
+  item 2's urgency rests on — check the cdr-import Triggers panel).
+
+  **NEXT for doc weight:** the two big prose sections are now both ratcheted
+  and both freshly extracted, so the remaining growth surfaces are "Key
+  commands" (~14 KB, several entries are effectively prose) and "Read first".
+  Neither is urgent. At 164.9 KB there is 35 KB of headroom under the 200 KB
+  cap — call it three weeks at the observed rate, and the ratchet is what
+  makes that rate visible per commit rather than at the cliff. Unselected
+  audit findings S2-1, B-3, B-5, B-6 and the dead-code list are untouched.
+
+- **Increment 74 (DONE — Round-15 broad-scan + six selected fixes):** A fresh
+  three-stage audit (six parallel subsystem passes + a seventh over the
+  script.html regions no prior pass had read line-by-line, all headline
+  findings self-verified in code) produced ~55 findings; the owner selected
+  A-1, G-1, C-1+C-2, B-1, B-3+E-2 for implementation. All six landed in one
+  commit (`9b65772`, pushed to `claude/broad-scan-l9ojgm`); the full summary
+  block is `.cycle/blocks/74-audit-fixes-broad-implement.md`. NOTE: this
+  round's finding IDs (A-#/B-#/C-#...) are per-agent namespaces from THIS
+  audit — the B-3/B-5/B-6 "unselected findings" mentioned by increments 71-73
+  are a DIFFERENT, older numbering; both sets remain open where not fixed.
+
+  Highlights: A-1 was the CONFIG_SOURCE=neon runbook silently wiping Final
+  Dept Labels with its own parity gate certifying the loss (backfill + compare
+  key both blind to col 11; the ongoing save path was fine — the fix is small
+  and the test fixture now carries a non-empty label so the class can't
+  recur). G-1 was a shipped, server-computed, doc'd feature dead client-side:
+  all four roster-cache writers dropped `subQueueGroups`, so parent managers
+  never saw the sub-queue picker groups. C-1/C-2 hardened the no-sheet-primary
+  captures: an all-stray grid (wrong-day signature) no longer triggers the
+  zero-record authoritative DELETE, and the daily import now surfaces every
+  delete-only outcome (unreachable/refused/cleared) instead of logging
+  nothing. B-1 (Direct company view per-(agent,dept) grouping, directCall:v3),
+  B-3 (YTD trend cache-put guards), E-2 (missed-section inline error + Retry)
+  round it out.
+
+  Verification: 615/615 unit tests (+3 pins), INV-16 clean, and — new for this
+  container — the FULL rendered-UI gate ran locally (playwright installs fine
+  into tools/ui-harness after `npm init -y` there; the root-install trap and
+  its package.json pollution are what previously made this look impossible).
+  All drivers passed. NET 2 − 0 = 2 (G-1 + B-1 were live; the rest latent).
+
+  **WHERE I LEFT OFF:**
+  1. Commit `9b65772` is pushed; working tree clean; NO PR opened (standing
+     rule: none unless asked).
+  2. **DEPLOY is the gating step, two projects:** dashboard (NEW VERSION, not
+     just push — Operator State #2) + cdr-import. cdr-report/dqe-report
+     unchanged. `scripts/deploy.sh <dir> <deployment-id>` does both steps.
+  3. Post-deploy: runLiveSmoke, then walk S36 (Dept Config round-trip), S38
+     (inbound capture), and the IR/Insights picker as a parent-dept manager
+     (the G-1 groups + the now-reachable mixed-selection refusal).
+  4. If `backfillDeptConfigToNeon` was ever run pre-fix, re-run it +
+     `compareDeptConfigSources` (Neon's final_dept_labels are blank from the
+     old code). Skip if the C2 migration was never started.
+  5. The audit's full report (ratings, top-5, ~49 unimplemented findings,
+     Stage-3 effectiveness review) is in the session transcript; the
+     follow-on list + doc-drift items are in the increment-74 block file.
+     Next best candidates: C-3 (retention trigger unversioned), B-2
+     (retirement-aware SmokeCheck/NeonCoverage), F-5/F-6 (harness can't
+     enforce REP-10/coercion protections), F-10 (deploy.sh skips ci:ui),
+     G-2/G-3 (stuck export button; hardcoded 95% goal line).
+  6. /sync-docs is warranted for the doc-drift set (F-3's INV-38 index line
+     above all — it misstates an AUTHORIZATION-relevant invariant in the
+     always-loaded file).
+
+- **Increment 75 (DONE — Round-15 Batch 1: capture & force-path data safety):**
+  C-5 / C-6 / C-8 / C-9, all in cdr-import; commit `05ec643`; summary block in
+  `.cycle/blocks/75-batch1-data-safety-broad-implement.md`. 618/618, INV-16
+  clean. NET 0 − 0 = 0 (all latent hardening).
+
+  Shape notes worth keeping: C-6 grew past its audit wording during
+  implementation — an ALL-unparsed grid turned out to pass the C-1 stray gate
+  (date-LESS records are not stray-DATED), so the counter also became a third
+  refusal arm (`allUnparsed`) beside `allStray`; and the two capture builders
+  are asymmetric (inbound emits date-less records for the writer to filter,
+  outbound drops them internally), so outbound counts via a
+  `records._unparsedDropped` array property (the `_neonReachable` precedent).
+  C-5 splits into an input-validation THROW (empty ext maps — structurally
+  zero rows) and a log-only failure row for rebuilt-to-zero-with-deletions
+  (P-5's legitimate force-to-zero preserved). `dcWriteSheet_` now returns
+  `{written, deleted}` — its one caller and one test updated.
+
+  Also this session, before Batch 1: increment 74's /sync-docs pass landed as
+  `4a2a92b` (INV-38 index line, INV-01 bullet, chunking claims, count-free
+  index lines, Operator State #43 for the unversioned `deleteOldCDRSheets`
+  trigger, the #25 re-run warning, the Round-15 fix-history family, two stale
+  in-file comments). The CLAUDE.md per-bullet ratchet seed for the Neon-write-
+  discipline bullet tightened 4896 → 4892.
+
+  **WHERE I LEFT OFF:**
+  1. Commits `4a2a92b` (sync-docs) + `05ec643` (Batch 1) pushed to
+     `claude/broad-scan-l9ojgm`; tree clean; NO PR (standing rule).
+  2. **DEPLOY pending, two projects:** dashboard (increment 74's fixes — NEW
+     VERSION per Operator State #2) and cdr-import (increments 74 + 75).
+     cdr-report has only comment changes (can ride any later deploy).
+  3. Next batch when asked: **Batch 2 — Neon endgame enablers** (B-2
+     retirement-aware SmokeCheck/NeonCoverage, A-2 init-cache guard, B-4
+     case-insensitive entry-queue matching). Full batch list with efforts is
+     in the increment-74 close-out / the sync-docs session reply.
+  4. Minor deferred doc line: mention the C-6 `allUnparsed` arm beside C-1's
+     in the CLAUDE.md F2 sentence at the next /sync-docs.
+
+- **Increment 76 (DONE — Round-15 Batch 2: Neon endgame enablers):** B-2 / A-2
+  / B-4; commit `30bd1ac`; block in
+  `.cycle/blocks/76-batch2-neon-enablers-broad-implement.md`. 622/622, INV-16
+  clean, full ci:ui green. NET 1 − 0 = 1 (B-4 plausibly live: a case-mismatched
+  Dept Config alias attributed calls in the Missed report but silently not in
+  any inbound surface, and the parity check could not show it).
+
+  Shape notes: B-2 landed as a pure `ncReclassifyTrimmed_` + per-table
+  `sourceFn` dispatch (explicit typeof-guarded, NOT this[name] — unreliable
+  across the Apps Script global and the test vm) and a SmokeCheck check 1 that
+  now also verifies the roster tab under either source. B-4 forced
+  `inbound:v8` / `inboundHeatmap:v3` bumps; the cache-version-sync guard's
+  every-mention rule then flagged HISTORICAL `prefix:vN` citations in
+  invariants/known-issues — those were REPHRASED ("the inbound v7 bump"), not
+  deleted, so history stays while the guard tracks only live constants. Note
+  for the next bump author: rephrase historical citations up front.
+  getDeptConfigInit gained its FIRST test coverage (the A-2 pin).
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `30bd1ac` pushed to `claude/broad-scan-l9ojgm`; tree
+     clean; NO PR (standing rule).
+  2. **DEPLOY pending:** dashboard (increments 74 + 76 — NEW VERSION, Op
+     State #2) and cdr-import (74 + 75). After the dashboard deploy, inbound/
+     heatmap counts may shift where alias casing differed — that is B-4
+     working; runInboundQcdParityCheck is the evidence either way.
+  3. Next when asked: **Batch 3 — test-harness teeth** (F-5 fakeSheet
+     getMaxColumns enforcement, F-6 setNumberFormat coercion-protection spy,
+     F-7 Code.gs userJson escape + Setup.gs idempotency pins, + the guard-
+     header note from this increment's follow-on).
+  4. B-2's new behavior only MANIFESTS after a `DQE_READ_SOURCE=neon` flip +
+     sheet trim; under the current sheet source both tools behave as before.
+
+- **Increment 77 (DONE — Round-15 Batches 3+4: harness teeth + client
+  correctness):** F-5/F-6/F-7 + G-2..G-8/E-1/E-3; commit `15cf82c`; block in
+  `.cycle/blocks/77-batch3-batch4-broad-implement.md`. 628/628, INV-16 clean,
+  full ci:ui green. NET 1 − 0 = 1 (G-3's hardcoded 95% goal line was live
+  against the tunable 92 standard).
+
+  The load-bearing change is the HARNESS: fakeSheet now THROWS on a getRange
+  past getMaxColumns (columns only — the REP-10 class) and RECORDS
+  setNumberFormat calls, so the repo's two worst documented failure classes
+  (narrow-sheet writes, plain-text coercion protections) are enforceable for
+  the first time. All three new Batch-3 pins were MUTATION-verified (remove
+  the widen → 7 failures; strip the '@' calls → pin fails; strip the userJson
+  escape → pin fails). Setup.gs gained its first suite (INV-12 enforced).
+  If a future suite needs a narrow sheet deliberately, set `_maxColumns` —
+  do not loosen the fake.
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `15cf82c` pushed to `claude/broad-scan-l9ojgm`; tree
+     clean; NO PR (standing rule).
+  2. **DEPLOY pending, unchanged set:** dashboard (74 + 76 + 77 — one NEW
+     VERSION covers all) and cdr-import (74 + 75).
+  3. Remaining batches by priority: 5 (a11y E-6..E-10), 6 (B-5/B-6/A-3/A-4/
+     A-5/B-8 + the E-5 one-liner), 7 (C-3/F-10/F-9/F-11/F-8), 8 (D-1..D-6),
+     9 (C-7), 10 (D-8/D-9), + strategic (queue-split phases; Inbound/Direct
+     un-gating; G-1-class harness payload-contract assertion).
+  4. Next /sync-docs: one clause on the harness's new strictness in
+     CLAUDE.md's test-command blurb; the C-6 allUnparsed clause from
+     increment 75's note.
+
+- **Increment 78 (DONE — Round-15 Batches 5+6: a11y + server smalls):**
+  E-6..E-10 + B-5/B-6/A-3/A-4/A-5/B-8/E-5; commit `5c710da`; block in
+  `.cycle/blocks/78-batch5-batch6-broad-implement.md`. 630/630, INV-16 clean,
+  ci:ui green. NET 1 − 0 = 1 (B-5: ALL-sentinel managers were receiving NO
+  dept's alerts; they now receive every dept's — intended role semantics,
+  flagged to the operator in the block).
+
+  Two decisions worth carrying: (1) E-6 changed Enter semantics in
+  dsConfirm_ to FOLLOW FOCUS — Cancel-focused Enter cancels; it used to
+  confirm, destructive actions included. (2) B-6 resolved as
+  DOCUMENTED-DELIBERATE, not a code gate: a skipped weekly/monthly run has
+  no later run to cover it (unlike daily's next-weekday walker), so the
+  "missing" gates would lose digests; deferral needs a trigger redesign and
+  was explicitly declined in a comment block at the handlers.
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `5c710da` pushed; tree clean; NO PR (standing rule).
+  2. **DEPLOY pending:** dashboard (74/76/77/78 — one NEW VERSION covers
+     all) + cdr-import (74/75). Post-deploy: quick manual pass on the
+     keyboard paths (menus, dsConfirm_, chart-help) and an AT spot-check.
+  3. Remaining: Batch 7 (C-3/F-10/F-9/F-11/F-8), 8 (D-1..D-6), 9 (C-7),
+     10 (D-8/D-9), strategic items.
+  4. /sync-docs queue: harness-strictness clause, C-6 allUnparsed clause,
+     B-5's alerts note in the role-model bullet.
+  5. New follow-on: script.html ~7758 — the subq group-head <tr> carries the
+     same role="button" class as E-8 (has aria-expanded; right fix may
+     differ).
+
+- **Increment 79 (DONE — Round-15 Batches 7+8: deploy/ops hygiene + cdr-report
+  editor tools):** C-3/F-10/F-9/F-11/F-8 + D-1..D-6; commit `f6e92be`; block in
+  `.cycle/blocks/79-batch7-batch8-broad-implement.md`. 631/631, INV-16 clean,
+  ci:ui green. NET 0 − 0 = 0 (all latent/hygiene — an honest zero).
+
+  C-3 closes the round's longest-standing operational gap: the Call_Legs_*
+  retention prune now has an in-repo installer, a menu entry, and a
+  `retentionPrune` Pipeline Health row per run (INV-44 vocabulary + Operator
+  State #43 + the CLAUDE.md index line all updated to the new reality —
+  #43's ask flipped from "verify the invisible trigger exists" to "install
+  ours, remove the hand-made one"). F-9/F-10/F-11 armor the gate machinery
+  itself; F-8 makes sheetRepairs.js grep-able again. Batch 8 hardened the
+  editor tools that had never seen an audit: width-throw (D-1), sidebar XSS
+  (D-2), sheet formula injection (D-3 — a cdr-report-local crSheetSafeCell_
+  that deliberately passes signed-numeric strings), silent truncation (D-4),
+  falsy-index chains (D-5), and the stranded-Running state (D-6).
+
+  **WHERE I LEFT OFF:**
+  1. Commits through `f6e92be` pushed; tree clean; NO PR (standing rule).
+  2. **DEPLOY now spans all three projects:** dashboard (74/76/77/78, one new
+     version), cdr-import (74/75/79), cdr-report (79 — its first code deploy
+     this round). Then: CDR Tools → Install Retention Prune Trigger + delete
+     any hand-made deleteOldCDRSheets trigger (#43).
+  3. Remaining: Batch 9 (C-7 — defer until the Neon cutover decision), Batch
+     10 (D-8/D-9), strategic items.
+  4. /sync-docs queue (4 clauses): harness strictness, C-6 allUnparsed, B-5
+     alerts note, deploy.sh's TST-7 sentence now including ci:ui.
+
+- **Increment 80 (DONE — /sync-docs for the Round-15 batch queue):** commit
+  `e4e8601`. The four queued clauses landed (deploy.sh's ci:ui gate, F-9's
+  CI=true fail, harness strictness F-5/F-6, C-6's allUnparsed arm) plus B-5's
+  alerts note, #35's B-2 sheetTrimmed nuance, tests/README's strictness
+  contract, and a fix-history code→block map for every implemented Round-15
+  code. Both ratcheted bullets edited net-NEGATIVE (seeds tightened 4892→4881,
+  6160→6156). CLAUDE.md 170.1 KB (~30 KB headroom). 631/631, guards green.
+  The /sync-docs queue is now EMPTY.
+
+  **WHERE I LEFT OFF:** unchanged from increment 79 — the gating step is the
+  three-project DEPLOY (dashboard new version: 74/76/77/78; cdr-import:
+  74/75/79; cdr-report: 79) + the #43 trigger install. Remaining code work:
+  Batch 9 (C-7, deferred pending the Neon cutover decision), Batch 10
+  (D-8/D-9), strategic tracks. The Neon cutover runbook + its open
+  prerequisites were summarized for the owner in the increment-80 session
+  reply (README "full flip runbook" + Op State #19/#25/#30/#35 are the
+  durable references).
+
+- **Increment 81 (DONE — Round-15 Batch 10: frozen-legacy prep + PR):** D-8
+  (the dqe-report dual-onOpen collision resolved by deleting the redundant
+  copy — the menu file's is a strict superset, so this is the freeze's
+  cleanup-deletion class) + D-9 (a 5-item DECOMMISSION CHECKLIST comment in
+  DQEdashboard.js where the deleted function was). Block in
+  `.cycle/blocks/81-batch10-frozen-legacy-broad-implement.md`. 631/631,
+  INV-16 clean. NET 0 − 0 = 0.
+
+  **OWNER DECISIONS recorded:** staying on the Neon FREE tier; the cutover
+  proceeds per the runbook with a MULTI-WEEK soak spanning at least one
+  force re-import before any sheet trim. Batch 9 (C-7) stays deferred until
+  that soak concludes.
+
+  **WHERE I LEFT OFF:** Round-15's batch work is COMPLETE (1-8 + 10; 9
+  deferred by decision). A PR for the whole branch was opened + merged this
+  session (see the PR for the roll-up). Post-merge the operator steps are:
+  the three-project deploy (dashboard new version: 74/76/77/78; cdr-import:
+  74/75/79; cdr-report: 79; dqe-report: 81 cleanup push), the #43 retention
+  trigger install, then the Neon cutover runbook (README + Op State
+  #19/#25/#30/#35 — deploy first, gates before flags, soak before trim).
+  Remaining code work when wanted: strategic tracks (queue-split reader
+  phases → QUEUE_SPLIT_SCOPE flip, Inbound/Direct manager un-gating after
+  B-1's deploy + parity, the G-1-class harness payload-contract assertion)
+  and C-7 after the soak.
+
+- **Increment 82 (DONE — Round-16 quick wins: #7 NUL bytes, #5 orphan-prefs
+  sweep, #4 client fragment split):** neonbackfill.js is a text file again
+  (3 raw NULs -> escape sequences, the F-8 class); sweepOrphanPrefs_()
+  (script-2-chrome fragment, first call in init()) deletes the six documented
+  dead localStorage keys read-before-remove (supersedes the "left in place"
+  ruling on cdr.dept.subscope — owner selected #5 knowingly); script.html is
+  now a ~45-line ASSEMBLER splicing 11 raw-JS script-N-*.html fragments into
+  the same single script element / IIFE via a template-evaluating include_
+  (byte-identical partition — semantics provably unchanged). New enforcement:
+  4 html-include-structure pins (fragment purity, styles.html scriptlet-free,
+  include-list<->disk parity, node --check of the assembled body), all
+  mutation-verified; build-harness resolves nested includes. 635/635,
+  INV-16 clean, npm run ci:ui FULL PASS. NET 0 − 0 = 0. Block in
+  `.cycle/blocks/82-round16-nul-prefs-split-broad-implement.md`.
+
+- **Increment 83 (Round-16 owner batch, session continuation):** the Insights
+  progressive-disclosure restructure shipped -- Simple/Detailed mode RETIRED
+  for per-section folds (Queue health + Trends <details> with headline
+  summaries, per-user open-state, density-pref migration, draw-on-open for
+  trend chart + admin heatmap), the Insights header unified onto the My
+  Department controls pattern (From/To + shared Quick-select chips via the
+  new buildDatePresetChips_; popover slimmed to "Comparison & agents"), a
+  Phase-3 motion layer (page-swap fade, fold animation, elevation-on-stuck),
+  and the shared "Agent table / Insights" lens switcher in both sticky
+  headers. Owner removals: Bars/Radar toggle hidden (always bars), the
+  sub-queue relationship bar + "all queues" chip hidden (SUBQ_BAR_HIDDEN_),
+  the group-heading missed-calls button + missed-section scope banner gone.
+  Harness: drive-subqueue re-pinned to the hidden states; drive-smoke's
+  blank-canvas checker skips closed-<details> canvases (Chromium forced-
+  layout change). Earlier in the same session: EmailKit.gs became the
+  outbound-email house style (dept summary email NEW, Insights report/
+  summary, digest all cadences, alert, escalation notify, inbound, IR
+  snapshot; queue report stays the pinned reference), goal-gap sparklines
+  everywhere applicable, icon-only Refresh, share-tally rows replaced the
+  Insights donut, company-card escalations line, team-strip frost, the
+  sub-queue violation-date drill fix + Insights daily tally, email MTD pace
+  line, Cards view hidden + abs default. 651/651, INV-16, full ci:ui. Block
+  in `.cycle/blocks/83-round16-insights-disclosure-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** All of the above is code-complete + pushed on
+  claude/broad-scan-l9ojgm (post-#219 main + 9 unmerged commits through
+  3f36283). No PR opened yet (owner asks explicitly). Deploy on merge:
+  dashboard only (`clasp push -f` + new version; EmailKit.gs +
+  DeptSummaryEmail.gs are NEW server files, nothing deleted remotely).
+  Open decisions: the hidden Cards view's fate; whether to retire the
+  #dept-insights-strip teaser now that the lens switcher exists.
+
+### Increment 84 — M1 Insights merge (2026-08-07)
+
+  Owner approved folding the ENTIRE Insights page into My Department
+  (docs/insights-merge-plan.md, phases M1–M4). M1 shipped: the Insights
+  <section> moved inside #dept-page as the <details id="dept-insights-region">
+  collapsible (every inner id preserved incl. #insights-page), with the
+  LAZINESS CONTRACT (insEnsurePage_ + auto-generate on first OPEN only, via
+  the toggle listener / the sync deptInsightsOpen_ — sync because programmatic
+  details.open fires toggle async and handoff callers write ins-* fields right
+  after setPage returns). setPage('insights') maps to dept + open/scroll, so
+  deep links, Digest email links, quick-start chips, and the lens switcher all
+  land correctly. IR drill origin now travels as {fromInsights:true} (the four
+  script-8 call sites). Sticky strips stack (insights header at
+  --dept-sticky-h, z 59); print path retargeted; data-page="insights" CSS
+  retired; INV-37 amended. Earlier the same session (commit 7dbef14): top-nav
+  Insights tab retired, multi-queue Daily breakdown (per-queue tally rows + All
+  queues total per date, color-coded counts). 651/651, INV-16, full ci:ui,
+  plus two live-DOM probes (lazy cold load / lens open / chip route / drill
+  origins). Block in `.cycle/blocks/84-m1-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M1 pushed as e6a704f on claude/broad-scan-l9ojgm
+  (branch restarted from post-#220 main; 2 unmerged commits: 7dbef14 +
+  e6a704f). No PR opened (owner asks explicitly). Deploy on merge: dashboard
+  only (clasp push -f + new version; no remote deletions). Next: M2 controls
+  reconciliation per the plan doc — Refresh contract for open folds, region
+  headline on the collapsed summary, open-state persistence decision,
+  adoptSharedWindow_ retirement; then M3 (dept pill, Gap-vs-team default,
+  A/B panel scoping) and M4 (transition-machinery removal). Watch: the
+  closed-mid-generate chart-size exposure (M2 re-arm).
+
+### Increment 85 — M2 Insights merge: controls reconciliation (2026-08-07)
+
+  M2 shipped per docs/insights-merge-plan.md. The dept controls row is now
+  the page's SINGLE DATE AUTHORITY: the region's own header From/To +
+  Quick-select row (#ins-hdr-controls) is hidden (wiring inert until M4),
+  and the new insSyncToDeptWindow_ converges the region -- on refresh()
+  (open + rendered + window moved -> re-run via insApplyWindow_) and on
+  region toggle-open (stale closed region re-runs on next open). It skips
+  while a programmatic run is armed, so chip/share-link windows never race;
+  priority: share link > chip/handoff > dept window > prefs > defaults.
+  insRegionHeadSync_ puts a live headline on the collapsed summary
+  (% answered · missed rings · abandoned % · window; teamStats fields are
+  stat OBJECTS -- read .formatted). Decisions recorded: NO open-state
+  persistence (auto-open would re-fire the RPC per dept visit); per-region
+  Export menus stay. adoptSharedWindow_ (R9-3) retired; pageActiveWindow_
+  survives only as the dwell-prefetch feed. Toggle-open re-CREATES charts
+  from insLastData, closing the collapsed-mid-generate 0x0-canvas exposure
+  from the M1 block. Gates: 651/651, INV-16, full ci:ui + a live-DOM probe.
+  Block in `.cycle/blocks/85-m2-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M2 pushed as 8379956 on claude/broad-scan-l9ojgm
+  (3 unmerged commits: 7dbef14 tab-retire/daily-breakdown, e6a704f M1,
+  8379956 M2 + checkpoints). No PR opened (owner asks explicitly). Deploy
+  on merge: dashboard only. Next: M3 -- dept pill on the region header
+  (owns the dept-SWITCH convergence gap: an open region keeps the prior
+  dept's report until a window change), "See missed calls" as in-page
+  scroll, Agents default -> Gap vs team, A/B panel scoping. Then M4
+  retirement sweep (inert header-dates markup, lens switcher, handoff
+  detours, prefs-blob dates).
+
+### Increment 86 — M3 Insights merge: scope polish (2026-08-07)
+
+  M3 shipped per docs/insights-merge-plan.md. Dept identity: #ins-dept-pill
+  states the report's dept (warn --scoped variant when a sub-queue selection
+  narrowed it), the dept leads the collapsed headline, and
+  insSyncToDeptWindow_ now converges on a header dept SWITCH via
+  insLastHeaderDept_ (re-ensure roster + agent-free auto-run behind the
+  loading pane) -- closing the M2 gap where an open region kept the old
+  dept's report. Both same-page hand-offs became in-page scrolls
+  (missed-link -> qsSpotlight_, "Agent table" -> table scroll;
+  handoffToMyDept_ kept as fallback). The Agents chart defaults to Gap vs
+  team with a saved-'abs' self-heal (the same-page table carries Absolute).
+  The fixed A/B remote hides while the region is off-screen
+  (IntersectionObserver -> .ins-ab-offscreen). Gates: 651/651, INV-16,
+  full ci:ui + live-DOM probes (incl. the sync dept-switch pane proof).
+  Block in `.cycle/blocks/86-m3-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M3 pushed as dc02ea0 on claude/broad-scan-l9ojgm
+  (unmerged: 7dbef14, e6a704f M1, 8379956 M2, dc02ea0 M3 + checkpoints).
+  No PR opened (owner asks explicitly). Deploy on merge: dashboard only.
+  Next: M4 retirement sweep -- inert #ins-hdr-controls markup + header-date
+  wiring, the lens switcher decision (keep as scroll affordances vs drop),
+  handoff/launcher setPage detours, dead router branches
+  (basePageRoute_/updateTabActiveState_ insights arms), the irDrillToAgent_
+  data-page belt, insights-side recordPageWindow_, prefs-blob dates, the
+  ex-hand-off hover-prefetch.
+
+### Increment 87 — M4 Insights merge: retirement sweep — MERGE COMPLETE (2026-08-07)
+
+  M4 shipped; the M1-M4 Insights->My Department merge is COMPLETE
+  (docs/insights-merge-plan.md, all four phases checked). The lens switcher
+  is KEPT as a jump affordance ("Insights" -> deptInsightsOpen_ directly,
+  no date carry / no forced re-generate; "Agent table" scrolls up).
+  Deleted: handoffToInsights_, the #ins-hdr-controls header-dates row +
+  wiring + CSS, the ex-hand-off hover-prefetch, basePageRoute_'s insights
+  branch, updateTabActiveState_'s effRoute mapping, irDrillToAgent_'s
+  data-page belt, the dwell 'insights' arm + pageActiveWindow_.insights,
+  and the prefs blob's preset/from/to. setPage('insights') + the
+  '/report/insights' route/share-state entries are PERMANENT compat
+  surface (deep links + Digest email links). Net -62 lines. Gates:
+  651/651, INV-16, full ci:ui + a live-DOM probe (lens first-open
+  generates / re-click pure-scrolls / chip route lands / prefs slimmed).
+  Block in `.cycle/blocks/87-m4-insights-merge-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** M4 pushed as 9a98ad2 on claude/broad-scan-l9ojgm.
+  Unmerged commits: 7dbef14 (tab retire + multi-queue daily breakdown),
+  e6a704f (M1), 8379956 (M2), dc02ea0 (M3), 9a98ad2 (M4) + checkpoints.
+  No PR opened (owner asks explicitly). Deploy on merge: dashboard only
+  (clasp push -f + new version; NO server .gs files changed across the
+  whole merge, so no web-editor deletions needed). Post-deploy: walk
+  S37/S32/S14/S18/S19/S23/S39 live. Nothing pending on the merge plan.
+
+### Increment 88 — N1 always-inline Insights (2026-08-07)
+
+  Post-deploy owner feedback: M1-M4's collapsed region + tab-styled jump
+  switcher still read as two pages. N1 makes it ONE CONTINUOUS page: the
+  region is OPEN by default and GENERATES with the dept page
+  (deptInsightsEnsureLive_ on dept entry + refresh, data-page-gated so the
+  Overview landing pays nothing; manual collapse respected per session;
+  insRearmZeroCharts_ covers hidden-created charts). The lens switcher is
+  REMOVED on both sides; deep links/chips land via the mapped
+  setPage('insights'). Retired as a consequence: the dwell prefetch, the
+  shared-window store, prefetchDeptSummary_. Harness: smoke navs drop the
+  lens step (24 checks). Gates green + live-DOM probe. Block in
+  `.cycle/blocks/88-n1-always-inline-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** N1 pushed as 5991e17 on claude/broad-scan-l9ojgm
+  (branch = post-#221 main + 009278a sync-docs? NO -- #221 merged through
+  009278a; unmerged: 5991e17 only). No PR opened for N1 yet (owner asks
+  explicitly). Deploy on merge: dashboard only. Open decisions: the
+  overlapping-surfaces merge (team strip vs KPI tiles, QCD panel vs Queue
+  health) -- owner to judge on the live continuous page; the
+  viewport-approach fetch trigger stays as the escape hatch if cold
+  generates feel heavy.
+
+### Increment 89 — PERF-1/2 cold-load fixes (2026-08-07)
+
+  Owner asked whether first-open latency could be improved after the N1
+  always-inline deploy. Investigation found two real defects, both fixed:
+  **PERF-1** -- CacheWarm warmed getInsightsReport over the LAUNCHER window
+  (30d), but since M2 the inline section takes the DEPT window
+  (latest..latest, INV-43). The cache key carries the window, so the warm
+  was never read: every first dept open paid a cold aggregation while the
+  heaviest ~4 min of the warm job produced unread entries. Now two passes,
+  most-used first (dept default, then launcher), one shared budget.
+  **PERF-2** -- the first-open auto-run was consumed POST-roster, so
+  getInsightsReport waited a full round trip behind getInsightsReportInit.
+  An agent-free run needs nothing from the roster (INV-45), so it now
+  fires in parallel, deferred one tick so the launcher/deep-link paths
+  (which own their window/selection) still win. refresh() also dispatches
+  the dept summary BEFORE the Insights legs. Measured: report dispatch
+  went from a full round trip behind the roster to the SAME millisecond;
+  guards verified end-to-end (chip keeps its 29d window; deep link keeps
+  its shared window + agents; exactly one run each). Gates: 651/651,
+  INV-16, ci:ui 24+16+30+14. Block in
+  `.cycle/blocks/89-perf-cold-load-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** Pushed as 98a4f6b on claude/broad-scan-l9ojgm
+  (branch restarted from post-#222 main; 1 commit + this checkpoint).
+  No PR opened yet (owner asks explicitly). Deploy on merge: dashboard
+  only. **Operator note: PERF-1 only pays off if the cache-warm trigger
+  is actually installed** (Alerts modal -> Report cache warming) -- worth
+  confirming; likewise DQE_READ_SOURCE (Op State #19) is the largest
+  remaining server-side lever. Known follow-ons: the dept-SWITCH path
+  still serializes init->report (and double-dispatches the init) --
+  deliberately out of scope since firing early there would read the
+  outgoing dept's checked agents; cold boot double-dispatches
+  getDepartmentSummary (pre-existing); splitting the insights endpoint
+  for progressive render is the next lever if cold loads still drag.
+
+### Increment 90 — R16c owner test-pass notes (2026-08-07)
+
+  Seven owner notes on the always-inline deploy, all landed (9851d32):
+  collapsed "All queues" day rows in the multi-queue Daily breakdown
+  (violation chips force-open their day); Team-detail heatmap + share
+  table side by side (.ins-detail-row; mock screenshot sent — stand-in
+  heatmap data, real share table); ONE Export menu (labeled groups) + ONE
+  Refresh on the dept controls with the region's own pair removed (Views
+  wiring un-nested from the dead guard; refresh's same-window insights
+  pass has an in-flight guard — the probe caught a double-fetch);
+  missed-detail frost unified (deptMissedDetailFrost_); My Department
+  email grouped into per-dept sections with deptGroups subtotals;
+  Insights email consolidated to ONE form (behind-team block +
+  active-only agent table; digest inherits via the shared rows). Item 3
+  ("remove the toggle") was already done in N1 — stale cache sighting.
+  Gates: 651/651, INV-16, ci:ui 24+16+30+14 + live-DOM probe. Block in
+  `.cycle/blocks/90-r16c-test-notes-broad-implement.md`.
+
+  **WHERE I LEFT OFF:** Pushed as 9851d32 on claude/broad-scan-l9ojgm
+  (branch = post-#223 main + this commit + checkpoint). No PR opened
+  (owner asks explicitly). OPEN QUESTIONS FOR THE OWNER: (a) their note
+  "could potentially make the same change to" was cut off — which other
+  pairing did they mean?; (b) judge the side-by-side layout from the mock
+  / post-deploy; (c) the deeper email consolidation (ONE email = dept
+  table + insights) proposed, not built. Follow-on: insBtnFeedback_
+  retarget to #dept-export-btn.
+
+### Increment 91 — R16d email polish + Queue-health columns (2026-08-10)
+
+  Owner batch answering increment 90's open threads. Daily Call Queue
+  Report email: 'Daily Company Aban %' retitle with tier-colored value
+  (green ≤3 / amber 3–4 / red >4; tile bg keeps the ≥5 flag), all KPI
+  cards centered, the banner-only single-queue collapse RETIRED (every
+  queue gets its own tally row; some repeats accepted — the dedup was
+  why tallies went missing), and '/day' added to the MTD pace line's
+  prior value (web twin in script-11-qcd-boot too; "Jul 100" read as a
+  date). queue-report pins updated (37 pass; the clean-banner Viol pin
+  re-targeted by padding signature). Insights Queue health: KPI tiles
+  stack in a left third beside the per-queue table (.ins-qh-cols —
+  NOT .ins-qh-row, which is already the table's <tr> class and a flex
+  rule there wrecks the rows; the probe caught it). ≤900px stacks the
+  columns AND restores the horizontal tile grid in one media query.
+  Mocks rendered from the REAL builders (harness + playwright) and sent:
+  full email, 3-tier company-aban strip, queue-health row. Gates:
+  node --test 0 fail, INV-16, ci:ui 24+16+30+14. Block in
+  `.cycle/blocks/91-r16d-email-polish-qh-cols.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Awaiting owner verdict on both mocks.
+
+### Increment 92 — R16e owner round (2026-08-10)
+
+  Five owner notes off the #224 deploy. Totals label bare with the
+  crossover caption moved to a tooltip (NOT dropped -- the shortfall
+  rule needs it, and drive-smoke asserts both halves); Views hidden +
+  "Comparison & agents" moved into the Insights title line; the heatmap
+  now STRETCHES to the share table's height (grid-auto-rows absorbs the
+  slack in the day rows, not the hour header) and its cell drill renders
+  BELOW the row with both lenses side by side, via a `data-heat-detail`
+  opt-out on the shared renderer (+ an external-panel reset, since the
+  innerHTML swap can't reach it); Daily breakdown rows fade+settle and an
+  over-5% rate is finally bold (the global weight rule lost on
+  specificity to `.ans-nums .ans-rate` -- it had never applied); Queue
+  health promotes Avg answer + Longest wait, mirrors Transfer %
+  (same-window-guarded, since a saved view can decouple the windows) and
+  adopts the dept strip's split Queue-calls format. Harness fixture
+  gained CSR Transfer Historical Data -- every payload was
+  `csrTransfer: null`, so that tile was unreachable from the gate.
+  Gates: 652/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/92-r16e-owner-round.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Awaiting the owner's verdict on the two
+  mocks.
+
+### Increment 93 — R16g calendar drill + Absolute retire (2026-08-10)
+
+  The Agents chart's Absolute basis is hidden (it restated the same
+  page's agent table; the M3 self-heal already existed) and Rung left
+  the metric selector with a pref self-heal. Calendar day-clicks now
+  JUMP to the Daily breakdown -- fold+details open, day group expands,
+  and a per-date drill row lists every missed ring + queue abandon
+  (getMissedCallsSlice, from=to=date, no filter; missedSliceListHtml_
+  renderer so "↳ path" chips work) -- replacing the single-day region
+  reload that left the page's halves on conflicting windows. Fallback to
+  the old reload only when the daily table can't take the jump. Wait
+  times would need a new per-date inbound RPC (noted in block 93).
+  Gates: 653/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/93-r16g-cal-drill-abs-retire.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly). Mock sent; owner may refine the drill's
+  content (they offered to guide from the mock).
+
+### Increment 94 — R16h trend jump + wait-time lens (2026-08-10)
+
+  Trend LINE point-clicks now jump to the Daily breakdown like the
+  calendar when the point is a single DAY; a monthly point keeps the
+  re-run (a month can't be a day drill). Wait times reached the day
+  drill without a new endpoint: `getInboundHeatmapCell`'s dow/slot are
+  now optional-but-paired, so omitting both answers for the whole
+  from..to range (the drill passes from=to=date) while every other
+  guarantee stays shared; half a pair throws rather than silently
+  widening. The drill renders two labeled lenses -- DQE missed rings
+  (agent + path) and inbound abandons (wait/hold + queue path) -- with
+  the inbound half ADMIN-ONLY, since inboundResolveRequest_ still
+  carries the Inbound report's vetting gate. Harness mocks the cell
+  endpoint (hand-authored; getInboundHeatmap stays unmocked by design).
+  Gates: 656/0, INV-16, ci:ui 36+16+30+14. Block in
+  `.cycle/blocks/94-r16h-trend-jump-wait-lens.md`.
+
+  **WHERE I LEFT OFF:** committed + pushed on claude/broad-scan-l9ojgm.
+  No PR (owner asks explicitly).
+
+### Increments 96–97 — R17: call grouping + Team Rings Data panel (2026-08-11)
+
+  Owner-approved two-part round, both client-only. R17a: consecutive
+  missed-timeline entries sharing (date, parentId) group under a warm
+  rail -- one abandoned call that rang repeatedly; siren + id badge once
+  per group, explainer on hover (no caption, owner). Plain rings can't
+  group (no id in DQE; identity dies with Call_Legs). Fixture now seeds
+  an ADJACENT re-rung parent (random pairs interleaved and never
+  grouped) with the LATEST day always groupable (the dept default
+  window drive-smoke sees). R17b: the Insights region moved INSIDE
+  .dept-layout > .dept-main so the aside stickies the whole page (print
+  carve re-chained); #dept-team-rings renders % Ans (rings) + Avg ans
+  time + the condensed agent table (short names/full-name hover,
+  per-row tallies capped at 12 blocks via ansTallyUnitFor_'s new
+  optional cap, per-dept mini-groups, 10-row scroll, row-jump flash)
+  from the same summary payload; the Insights rollup cards (+ title,
+  removed per owner) and queue-health cards are hidden inert. Gates:
+  660/0, INV-16, ci:ui 46+16+30+14. Blocks 96/97.
+
+  **WHERE I LEFT OFF:** committed + pushed. No PR (owner asks
+  explicitly). Awaiting owner's live-deploy verdict on the panel.
+
+### Increments 98–106 — R17d–R18: always-on Calendar, then the R18 owner list (2026-08-12)
+
+  Four merged rounds then an unmerged one. **R17d** (PR #228) made the
+  Insights trend Calendar available at EVERY window length: a window too
+  short to fill one falls back to the server's new year-to-date daily
+  series (`trendYtd`, accumulated inside the 12-month trend pass, so no
+  extra read), captioned so a grid of the year under a one-day page
+  can't read as that day. **R17e–R17i** (PRs #229, #230) were owner
+  polish: lens cards, chronological abandons with a hover-ⓘ, the Queue
+  Call Data panel's half-width bug, per-user fold memory, the email
+  tally at 20 calls/block, ring-run grouping, the redundant Insights
+  header date chip removed (the dept controls are the page's single date
+  authority), bucket drill onto the shared missed-ring renderer, and
+  `groupConsecutiveByCall_` extracted. **PR #231** was a /sync-docs pass;
+  **PR #232** split the 12.5 KB fused Inbound-capture bullet into seven
+  topical bullets, all under the 4 KB ratchet.
+
+  **R18** is the current owner list, worked in four phases and NOT yet
+  PR'd. Phase 1: visual fixes (tally alignment, dark-mode select
+  options, share-list scroll). Phase 2 + the phase-3 follow-on: the
+  owner's ruling that **manager call volume stays in dept totals and
+  rates but leaves per-agent averages and benchmarks** — INV-26's
+  `TEAM_AVG_EXCLUDES` reached ONLY the Individual Report, so a manager
+  on the roster diluted every Insights "vs team average". `insights:v22`
+  now carries `meta.teamAvgBasis` and per-row `excludedFromTeamAvg`, and
+  all four classification surfaces (headline chip, card rails, the
+  call-share equal-share benchmark, the email's behind-team block) read
+  ONE accessor. Phase 3 also clamps a selected To-date back to the last
+  day with data — trailing empty days were deflating every per-workday
+  figure (the measured 273.8/day vs 365/day disagreement). Phase 4:
+  `repaintLiveCharts_` widened from the Overview chart alone to every
+  visible dept-page chart, which is what made the gap chart's zero
+  baseline vanish after a light→dark TOGGLE (load-in-dark was always
+  fine); and the Calendar now accepts the Queue: Abandoned % metric via
+  `queueHealth.ytdDailySeries` — free, because the QCD 12-month trend
+  pass already spans Jan 1. Gates across the phases: 671/0, INV-16,
+  ci:ui 68+16+30+14. Blocks 98–106.
+
+  **WHERE I LEFT OFF:** R18 phases 1–4 committed on
+  claude/broad-scan-l9ojgm, no PR (owner asks explicitly). Owner items
+  still open: 1's second half (a Yesterday/MTD toggle on the Team Rings
+  panel — needs a data decision, the rings payload has no MTD block), 5
+  (Sales' agent count overruns its container), 6 (confirm the
+  Gap-vs-Team colour valence on the Missed metric), 7. Standing
+  constraint from an earlier round: the Spanish-vs-CSR queue-split
+  separation was INVESTIGATED ONLY — owner asked for no pipeline changes.
+
+### Increments 107–109 — R18b/R18c: tally scale everywhere, layout, blast guard (2026-08-13)
+
+  **R18b** (PR #235): the email tally PREFERS 2 calls/block (adaptive ladder
+  as fallback -- 2 wins only when it clips a strict minority, since clipping
+  is only honest while rare) and the WEB all-dept report got the SAME
+  one-unit scale, superseding R18's deliberate deferral (qcdDailyBarCell_
+  gained opts.tallyMax so a shared-scale caller can clip). Per-agent missed
+  cards moved behind a per-user fold (closed default, count on summary) with
+  a measured-rank diagonal wave (waveIn_, reduced-motion-safe, `both` fill);
+  heatmap waves on render. The sticky aside became a bounded flex column so
+  panel 2's table shrinks instead of the column growing a scrollbar.
+  qsSpotlight_ scrolls via scrollFullyIntoView_ (sticky inset from resolved
+  top+height) so the spotlighted card clears the pinned strip.
+  **Pre-rollout audit** (owner rolling out to managers): all RPC-callables
+  verified gated (7 apparent gaps were resolver-internal gates); flagged the
+  manager-visible all-dept QCD report (deliberate prior decision) and the
+  client-only diagnostics hiding (own-dept data, cosmetic). **R18c**: the
+  blast button's double-send gap closed BOTH directions -- fresh lastSent
+  read -> danger dialog "Send a second copy" -> force:true; server refuses
+  an unforced already-sent day (closes the stale-read race). Blocks 108-109.
+
+  **WHERE I LEFT OFF:** committed + pushed, PRs #233-#235 merged; R18c PR
+  pending. Owner deploying to managers today. Open: EMAIL_ALIASES /
+  Team-Avg-Excludes population are operator steps; Spanish/CSR crossover
+  stays a messaging caveat until QUEUE_SPLIT_SCOPE phases finish.
+
+### Increment 110 — R18d: the Field Ops Power incident's three safeguards (2026-08-14)
+
+  Owner found FOP + Denials agent-dark since 6/17 mid-rollout; diagnosis
+  walked dashboard -> Outlier Fix (no orphans) -> Diagnostics (roster
+  no-data) -> DQE sheet (no rows at all) -> Raw Data (legs present!) ->
+  the build code: the phone system dropped the A_Q_* token from col W
+  (Caller ID), starving the DQE build's queue recognizer. QCD flows from
+  a different source, so nothing noticed for two months. Three safeguards
+  shipped: (1) DqeSilenceWatch.gs -- flag-gated daily engine, per-dept
+  silent-streak (QCD volume + zero roster DQE rows), one email per
+  episode at days>=2 && cumulative calls>=5 (cumulative so Denials-sized
+  depts alert too); DAL-read; inconclusive-on-flaky-reads; svc + OPS-8
+  Health rows; operator-state #44. (2) Overview tile queue-lens badge
+  (companyOverview:v21, `dqeSilence` per dept, 7-day window) -- a LABELED
+  different lens (QCD calls != DQE rings), on grid tiles AND sub-queue
+  cards; fixture's Billing turned out to be a live specimen, so smoke
+  asserts the positive case permanently. (3) Login notify (Auth.gs,
+  doGet) -- first-sighting + outcome-change emails incl. DENIED attempts,
+  ON by default, capped store, operator-state #45. 693/693 (+18), smoke
+  84/84.
+
+  **R18e (same day):** owner pulled two side-by-side sample calls; the
+  broken queues stamp only the originating EXT in col W where working
+  queues stamp "A_Q_Name,<origin>" -- a per-queue PROVIDER setting, not
+  a feed change (the CSR leg of the same call was fine). Fix shipped in
+  the build (both INV-16 copies): pre-pass ext->queue-name map from the
+  file's own queue-callee legs; fallback fires only when col W fails AND
+  caller is CallQueue(<ext>) AND the ext named a queue today. Col W wins
+  when it matches (byte-identical normal path); unresolvable ext stays
+  dropped. Pinned with the incident's sample-row shapes. Repair is now
+  PLAIN FORCE RE-IMPORT of the surviving window -- no col-W editing.
+  known-issues gained the full incident entry.
+
+  **WHERE I LEFT OFF:** PR #239 (safeguards) open unmerged; R18e commit
+  going into the same PR. OPEN OPERATOR WORK: ask the provider to restore
+  the per-queue caller-ID setting (FOP + Denials vs Manual Mobility);
+  after deploy: force re-import the surviving ~14-day window,
+  backfillDQEHistoryUpsert() if on neon, install the watchdog trigger.
+  6/17->retention-floor agent history is unrecoverable.
+
+### Increment 111 (2026-08-14) — R19: error beacon + usage telemetry (post-#239)
+
+  PR #239 MERGED (squash f43b9c8) + branch reset onto main. Then two
+  owner asks in one round: (a) editor-run trigger/status RPCs now
+  Logger.log their status JSON via Util.gs::logStatusReturn_ (23
+  callables, 9 engines) -- the Apps Script editor discards return
+  values, so "started/completed and nothing else" read as a no-op.
+  (b) R19 rollout observability: reportClientIssue beacon (client
+  listeners for EVERY user + 4 top-level load-failure handlers ->
+  immediate admin email, sig-throttled 30min + 15/6h window cap);
+  'overview' landing rows (auto-refresh/Retry pass auto:true, not
+  logged); 'escalations' page-entry rows (pageView flag only from
+  setPage); Health usage section gained a collapsed per-user
+  "User activity (last 30d)" rollup (cap 40, top-3 digest). 699/699
+  (+5), one new CLAUDE.md bullet, block 111.
+
+  **WHERE I LEFT OFF:** ci:ui was finishing at write time (client
+  fragments touched -- must be green before PR). UNANSWERED to owner:
+  the feedback-box question (recommendation drafted: yes, email-only +
+  html2canvas screenshot + optional anonymity, reuse beacon throttle;
+  do NOT build a sheet-backed inbox). Not yet PR'd -- owner merges on
+  explicit word. Operator work outstanding from #239 unchanged
+  (provider ticket, force re-import, watchdog install,
+  NOTIFY_ON_NEW_ESCALATION property now set by owner? -- they said
+  "Set NOTIFY_ON_NEW_ESCALATION=true" but only they can do it in
+  Script Properties; instructions given).
+
+### Increment 112 (2026-08-14) — R20: per-dept escalation counts + Spanish threshold
+
+  (a) getEscalationsBadge now GROUPs by department; totals summed from
+  the groups (can never disagree); byDept lists open-carrying depts
+  busiest-first ({dept, open, overdue}). Strip + Company-snapshot line
+  render "(Sales 2 · CSR 1)" suffix, capped at 4 named + "+N more"
+  (escDeptCountsHtml_, script-2-chrome; reused by ovAggEscRender_).
+  Badge is viewer-scoped as before. Pinned in escalations-hardening.
+  (b) Spanish abandoned threshold: AbandonedFilter.js 0:00:01 -> 0:00:59
+  + CDR Tools menu label. NOTE: that's the MANUAL filter tool; the QCD
+  Historical engine (calcQcdReport) keys per-queue rules to QCDR Output
+  sheet rows -- row 40's dynamic block counts abandons waitDec > 0 into
+  its TOTAL (the only >0s rule in the engine). Whether row 40 IS Spanish
+  is sheet data (A40) we can't see from the repo -- owner asked to check;
+  if yes and they want QCD parity, it's a 2-line change (r40_tot2/tot4
+  -> time1Min) that shifts Spanish's reported totals going forward.
+  (c) Agent-role question: thoughts delivered, NO changes (owner said
+  don't build yet). Recommended start = own data + team AGGREGATES only
+  (no per-teammate rows, anonymized or not -- small cohorts make
+  anonymity cosmetic); per-dept configurability if managers differ;
+  key build precondition = email->roster-name mapping (Access Control
+  has no agent-name column today).
+
+  **WHERE I LEFT OFF:** ci:ui running at write time; commit after green.
+  700/700 unit. R19+R20 commits unPR'd on the branch (owner merges on
+  explicit word).
+
+### Increment 113 (2026-08-14) — Agent role Phase A (broad-implement)
+
+  Owner approved the agent-role plan with three decisions (rank line
+  build-hidden; CSR pilots; missed list + wait time where derivable) and
+  commissioned Phase A. SHIPPED DARK behind AGENT_ROLE_ENABLED (unset =
+  byte-identical pre-agent behavior): Access Control grew Role + Agent
+  Name (blank Role = manager; acEnsureSchema_ heals old headers on next
+  editor save; agent rows validate one-real-dept + exact roster name);
+  resolveUser_ resolves agents to the FAIL-CLOSED shape (departments [],
+  identity only in agentDept/agentName; manager rows win; unknown roles
+  drop); assertDeptAccess_ + escAssertRowAccess_ became explicit
+  admin/manager ALLOWLISTS (the audit found the old role-none denylist
+  passed unrecognized roles UNPINNED -- the role model's recurring
+  defect, 5th sighting); assertManagerOrAdmin_ gates the un-pinned
+  all-dept surfaces (Overview, YTD trend, qcdAllDept, sendQcdAllDeptEmail,
+  esc init/badge, getCallJourney); doGet allowlists the dashboard render.
+  Agents CAN reach latestDate + the error beacon (deliberate). 715/715
+  (+15), block 112, operator-state #46.
+
+  **WHERE I LEFT OFF:** ci:ui finishing at write time; commit gated on
+  it. Everything since PR #239 is unPR'd on the branch: R19 (beacon +
+  telemetry), R20 (esc dept counts + Spanish 59s), agent plan + mocks,
+  Phase A. Owner merges on explicit word. OPEN QUESTIONS to owner:
+  QCDR Output cell A40 (is row 40 Spanish? 2-line QCD-parity change on
+  confirm); feedback-box build (recommended email-only + screenshot,
+  awaiting go). Phase B next on owner word (My Performance page +
+  getAgentHome + harness agent build + modal UI for agent rows).
+
+### Increment 114 (2026-08-14) — Agent role Phase B (broad-implement)
+
+  PR #240 MERGED first (R19+R20+plan+Phase A+Spanish row-40 -- A40
+  confirmed A_Q_Spanish, both >0s clauses -> time1Min, forward-only).
+  Then Phase B SHIPPED: AgentHome.gs (getAgentHome -- self-only identity,
+  INV-05 reconciliation choice, roster-only team aggregates, ordinal
+  rank shipped hidden, DAL trend + missed timestamps, TEAM/ME two-tier
+  cache, teammate-privacy pinned), agent.html+agentApp.html (SEPARATE
+  small template -- recorded deviation from the plan's single-doc
+  sketch; SVG trend, beacon, presets off getLatestDataDate), doGet
+  routing, Access modal Agents section (roster-name picker), and the
+  harness grew build-agent+drive-agent as BLOCKING ci:ui stages
+  (13 checks incl. rendered teammate-name privacy). 722/722; ci:ui all
+  stages; block 113. Feedback box SHELVED by owner.
+
+  **WHERE I LEFT OFF:** Phase B complete on the branch, unPR'd (owner
+  merges on explicit word). Next: owner word to PR/merge; then Phase C
+  when commissioned (My History, wait-time join, view-as-agent,
+  CLAUDE.md role bullet). Go-live runbook in operator-state #46.
+
+### Increment 115 (2026-08-14) — Agent role Phase C (broad-implement): CODE-COMPLETE
+
+  PR #241 (Phase B) MERGED first. Phase C then shipped the rollout's
+  remainder: (1) WAIT TIME on missed rings -- derivable and built
+  (ahWaitJoin_: journey missed-ring events by exact name, PST t +2h ->
+  CST slot axis; ring secs + elapsed-from-pickup wait, "waited" label,
+  capture-bounded, drop-on-ambiguity, bare timestamp when unknown);
+  (2) MY HISTORY (getAgentHistory: INV-29 window, monthly INV-25
+  weighted ATT with the in-page disclosure, team-avg from roster rows,
+  10-call best-month floor, agentHist:v1 dept cache, privacy pinned;
+  dual-line SVG + month cards tab); (3) VIEW-AS-AGENT
+  (?agentPreview=dept||name, Access modal Preview link, warn banner,
+  rides the existing admin path); (4) glossary fold; (5) CLAUDE.md
+  agent-role bullet (role-model bullet is ratchet-frozen -- new bullet
+  instead) + subsystem list + plan closeout. drive-agent now 20 checks.
+  725/725. Block 114.
+
+  **WHERE I LEFT OFF:** ci:ui full run finishing at write time; commit
+  gated on it. Phase C unPR'd on the branch -- owner merges on explicit
+  word. The agent role is CODE-COMPLETE; go-live = operator-state #46
+  (CSR rows + AGENT_ROLE_ENABLED=true + agent emails). Open owner
+  decisions: rank-line reveal (AGENT_RANK_SHOW_); feedback box still
+  shelved.
+
+### Increment 116 (2026-08-14) — /sync-docs after the agent rollout
+
+  Drift found + fixed: the role-model bullet's "Three roles" (stale
+  since Phase A) -> "Four roles" with a pointer to the agent bullet,
+  byte-compensated inside the same grandfathered bullet by trimming the
+  F13 narrative aside (F13 still resolves in fix-history); the ci:ui
+  Key-commands block (FOUR drivers -> SIX stages incl. the agent pair;
+  re-run list + suite roll updated); docs/invariants.md INV-30 gained
+  agentHome:v1/agentHist:v1. Verified resolved: README scriptId
+  placeholder drift (no stale string exists). Weight: 173.6KB /
+  ~26KB headroom -- watch it. 725/725; split+cache-sync tests green.
+
+  **WHERE I LEFT OFF:** committing; then PR (Phase C + doc sync) +
+  merge on the owner's standing instruction.
+
+### Increment 117 (2026-08-14) — R21: System Health load split
+
+  Owner (testing the redeploy): the full Health report loads slowly.
+  Diagnosis: the two Neon mirror probes are the page's ONLY live-Neon
+  rows, and outside the keep-warm window they pay the free-tier cold
+  start (~15s) INLINE in the single getSystemHealth call. Fix:
+  getSystemHealth({part:'fast'|'neon'|'all'}) -- fast (property reads +
+  bounded sheet tails) paints immediately with a muted "checking…"
+  placeholder in the neon section; the neon part (the shared-conn
+  mirror block, verbatim) streams in and replaces it (stale-token
+  guarded; warn row on probe failure; summary line notes the pending
+  check). Default 'all' byte-identical (editor runs + old tests
+  untouched). Pins: fast opens NO conn; neon opens exactly one and
+  returns only the two mirror rows; fast+neon == all by key set (the
+  third-bucket drift tripwire). 728/728.
+
+  **WHERE I LEFT OFF:** ci:ui running; commit+push after green. UnPR'd
+  on the branch; owner merges on word.
+
+### Increment 118 (2026-08-15) — Queue-split adoption round: ship list COMPLETE
+
+  All remaining DQE readers adopted the ONE narrowing helper: Missed
+  (both paths unified onto the DAL fetchers, counts + K..AC timeline
+  via per-queue mt with narrowSlots), IR + Insights (sheet reads
+  widened to col AI, REP-10-bounded), Overview (company pass split
+  from per-dept attribution; hero stays all-queue by design; 90d+YTD
+  trends; clone-per-dept via NEW queueSplitNarrowedCopy_), Alerts
+  (threshold now evaluates the displayed number; clones of the shared
+  memo), agent app (detail+history). Scope suffix on EVERY narrowed
+  surface's cache key. 732/732 (+4 helper pins incl. rollback-restores-
+  slots + shared-original-pristine); all reader suites + ci:ui green.
+  #42 rewritten: ship list COMPLETE + the 3-step flip checklist.
+
+  **WHERE I LEFT OFF:** committing; PR + merge on the owner's standing
+  instruction. THE FLIP is now operator-side: audit -> property ->
+  crossover spot-check (CSR/Spanish).
+
+### Increment 119 (2026-08-15) — Overview e2e suite + doc sync
+
+  The adoption round's follow-on closed: tests/unit/company-overview.test.js
+  (4) runs the REAL getCompanyOverview against a DQE fixture with stubbed
+  sub-probes -- pins the off-mode Phase 0 double-count (crossover agent
+  all-queue in both tiles; company aggregate counts each row once; sentinel
+  reaches nothing), the dept-mode PARTITION (11+4=15 with the no-split row
+  failing open), the no-cross-dept-leak shape on the shared row array, and
+  the all-queue hero invariance under the flip. 736/736. /sync-docs: the
+  CLAUDE.md test-suite roll gains the new suite; no other drift (the
+  adoption round's docs landed with it).
+
+  **WHERE I LEFT OFF:** committing; PR + merge per the owner's standing
+  instruction. All follow-ons from block 115 now closed except the
+  cosmetic narrowed-surface client chips (on demand).
+
+### SESSION CLOSEOUT (2026-08-15) — everything merged, branch clean
+
+  All work through increment 119 is MERGED to main (PRs #233-#244) and
+  the branch is reset onto main. 736/736 unit tests, INV-16, ci:ui all
+  stages green on the merged state. The rollout arcs completed this
+  session: R18 tally/report polish, the Field Ops Power incident
+  (root-cause fix + watchdog + queue-lens + login notify), R19
+  observability (beacon + telemetry + Health per-user), R20 esc dept
+  counts + Spanish threshold (both spots), the AGENT ROLE (A/B/C,
+  code-complete, dark), R21 two-pass Health load, the QUEUE-SPLIT
+  ADOPTION ROUND (ship list complete), and the Overview e2e suite.
+
+  **OPEN OPERATOR ACTIONS (owner-side, not code):**
+  1. DEPLOY the dashboard (last owner deploy predates PRs #243/#244).
+  2. Queue-split FLIP when ready: operator-state #42 checklist
+     (auditQueueSplitAttribution -> QUEUE_SPLIT_SCOPE=dept ->
+     CSR/Spanish crossover spot-check).
+  3. Agent pilot go-live when ready: #46 (CSR agent rows + emails ->
+     AGENT_ROLE_ENABLED=true).
+  4. VERIFY from the R18e incident: was the force re-import of the
+     surviving Call_Legs window run before retention pruned it? And
+     the provider ticket (per-queue caller-ID on FOP + Denials vs
+     Manual Mobility) -- the fallback covers recurrence either way.
+  5. Routine: COMPANY_HOLIDAYS yearly (#27); optional Neon backup
+     trigger if not installed (#28).
+
+  **OPEN CODE FOLLOW-ONS (all small, none blocking):**
+  - "Narrowed" indicator chips on IR/Insights/Overview when scope=dept
+    (the dept table already explains itself) -- cosmetic, on demand.
+  - Rank-line reveal: AGENT_RANK_SHOW_ (one client constant), owner's
+    call. Per-dept agent visibility (self|team Dept Config column)
+    only if a manager asks. Feedback box SHELVED by owner.
+  - The heatmap cell drill's "wait/hold" label still reads as queue
+    wait while wait_seconds is elapsed-from-IVR-pickup (the OLD open
+    follow-on in the QCD-vs-inbound gotcha) -- one label fix.
+  - Doc weight: CLAUDE.md ~174KB of the 200KB cliff (~26KB headroom).
+    The next /sync-docs should hunt trims, not just staleness.
+
+  **WHERE I LEFT OFF:** nothing in flight. A fresh session can run
+  /cycle-resume for continuity or /broad-scan for a new audit cycle
+  directly; this entry is the baseline.
+
+### Increment 120 (2026-08-17) — Live presence: "Active now" on the Health page
+
+Owner request: "see who is using the app live — could allow timing of
+rollouts easier/less jarring." Built end-to-end:
+
+- `SystemHealth.gs::recordPresence` (public; any signed-in role incl.
+  agents, role `none` rejected — the reportClientIssue gate class).
+  INV-01-clean: CacheService only (`presence:v1`), lossy no-lock
+  read-modify-write (next beat heals), prune 900s, active window 360s,
+  cap 100 entries (stalest dropped). `readPresence_` is the read side.
+- getSystemHealth FAST part gains a `presence` section rendered FIRST:
+  "Active now (last ~6 min)" summary + one muted row per user
+  (email · role · page · age). Muted like usage — information, not a
+  health state. The R21 fast/neon key-set pin holds (presence is fast).
+- Heartbeats: script-1-core (dashboard, `data-page` as page) +
+  agentApp.html ('agent') — on load, every 150s while
+  `document.visibilityState === 'visible'`, re-beat on
+  visibilitychange→visible; fire-and-forget, never throws.
+- Harness: `recordPresence` mocked in build-harness.js handlers AND
+  build-agent.js runner api (both drives assert no unmocked RPCs).
+- Tests: +6 in system-health.test.js (store+render, nobody-active,
+  role-none/agent gate, prune-vs-active windows, cap keeps fresh beat,
+  corrupt-JSON self-heal). 742/742. CLAUDE.md R19 bullet extended.
+
+NOT merged — on the branch awaiting the owner's word (the SESSION
+CLOSEOUT commit f9c8442 is also still unmerged; one merge carries both).
+Operator note: the section self-populates only after the NEXT deploy
+(clients must ship the heartbeat before anyone shows as active).
+
+### Increment 121 (2026-08-18) — R22: clamp-note fade, 4% abandon standard, tiered Viol MTD
+
+Three owner requests in one round:
+
+1. **Clamp-note auto-fade** (script-2-chrome + styles): the R18 To-date
+   "Adjusted to ..." note fades out ~6s after rendering (0.6s opacity
+   transition; re-clamp resets timer + opacity). The To field itself still
+   shows the corrected date.
+2. **Abandon standard 5% -> 4%** across all three layers:
+   - PIPELINE: `QCD_VIOLATION_ABANDON_RATE = 0.04` (cdr-import
+     autoImport.js — one constant, both the daily and bulk QCD writers).
+     Col L flags are written at import time, so HISTORY keeps its 5%-era
+     flags; current-month MTD counts mix eras until (optionally) rebuilt.
+   - SERVER display: `Config.gs::ABANDON_STANDARD_PCT = 4`, consumed by
+     QueueReportEmail.gs (tiers, preheader, offenders, tally/bar tints)
+     and InboundReport.gs (insurer daily tint).
+   - CLIENT: `ABANDON_STANDARD_ = 4` (script-1-core), read by
+     benchValueCls_, Overview chips + trend baseline (OV_BASELINE_LABELS_),
+     Insights QCD chart (QCD_THRESH_LABEL_ centralizes the reference-line
+     label sentinel), heatmap ramp + legend, QCD all-dept boot (hero tone,
+     tick now positioned inline at standard*10% of the 0-10% bar),
+     E9 forecast gate, dept/escalations table tints, glossary/help prose
+     (dashboard.html), headline composers.
+   - PINNED: cross-file-pins.test.js "R22" test — client == server == 
+     pipeline*100. queue-report.test.js pins updated to the 4% strings.
+3. **Tiered Viol MTD chip on Overview** (script-3-overview + styles):
+   the "N viol MTD" chip now ALWAYS renders — 0 green (.ov-qcd-viol-none),
+   1-2 amber (.ov-qcd-viol-low), 3+ red (.ov-qcd-viol-high). Day-level
+   per-queue chips keep the binary warn treatment.
+
+Docs synced: CLAUDE.md (heatmap C2 + E9 mentions, byte-neutral),
+invariants.md INV-51 live claims, conventions/known-issues/client-ui/
+regression-scenarios 5%->4% mentions, neonbackfill.js gate comment.
+743/743 unit; ci:ui re-run for the client changes.
+
+OPERATOR NOTE (era mix): QCD col L history keeps 5%-era flags. A day at
+4.5% before the redeploy is NOT a violation in history but would be one
+now. If a clean current month matters, force re-import (or rebuild) the
+current month's dates after deploying cdr-import so col L re-evaluates
+at 4%; then the Neon mirror re-upserts. Otherwise the mix ages out at
+the month boundary.
+
+### Increment 122 (2026-08-18) — R23: display-standards registry + coaching engine Phase 1
+
+Owner round (same message as increment 121's items): threshold/color-coding
+overhaul + the ratified turnover-suggestion Phase 0.
+
+- **Standards registry.** `ANSWER_TARGET_DEFAULT` 92 -> 80;
+  `ANSWER_AMBER_BAND_DEFAULT`=10; `DEPT_ANSWER_TARGET_SEED` CSR=92/2;
+  `TRANSFER_TIERS_DEFAULT` 25/30/35. Three Script Properties layer over the
+  seeds (`ANSWER_TARGETS` gains `band=`; new `DEPT_ANSWER_TARGETS`
+  `Dept=target/band`; new `TRANSFER_TIERS`), read via
+  `getAnswerStandardFor_(dept)` / `getTransferTiers_` /
+  `getStandardsBundle_` (Util.gs). One save RPC (`saveAnswerTargets`,
+  extended req) writes all three, all-or-nothing validation before the lock.
+- **Three-tier answer tints everywhere.** benchValueCls_ gained a `dept`
+  param -> green/amber(bm-watch)/red(bm-bad); wired: agent table bar + pct
+  cell (row.dept-aware for combined views), dept team-strip hero (target
+  tick now per-dept), Overview tile goal-gap sparklines (per-dept goal),
+  IR cards (irLastDept_), Insights KPI tiles + headline tones (dept-aware
+  headlineTone_/irHeadlineTone_), Direct/Inbound surface targets (three-tier
+  with the global band), Digest verdict + DeptSummaryEmail + Insights email
+  (getAnswerStandardFor_(dept)), agent app (server-resolved __ANSWER_STD__,
+  new answerRateCls_ + .bad tier).
+- **CSR Transfer % tile tiers** (tf-deep/light/amber/red) per owner cuts.
+- **Reference + editor.** Help topic "The color-coding standards" renders
+  LIVE values from __STANDARDS__ (fillStandardsHelp_); Alerts modal section
+  renamed "Display standards" with band / per-dept / transfer fields.
+- **Coaching engine (dark).** New Coaching.gs: coachingWindowFromLatest_
+  (10 working days, holiday-aware), computeCoachingFlags_ (rate<50 AND
+  >=5pts behind team AND >=20 missed; TEAM_AVG_EXCLUDES out of both team
+  aggregate and candidacy; roster-only rows), previewCoachingFlags (admin,
+  read-only, per-dept best-effort) + runCoachingPreview editor wrapper.
+  Owner rulings recorded: delivery later = email + escalation card but a
+  SEPARATE worklist from customer escalations; no pilot dept — all depts,
+  admin-only notifications until released.
+- Tests: answer-targets 11 (band/dept/transfer/bundle), coaching 8 (new),
+  cross-file R23 fallback pin, dept-summary-email pin 92->80. 758/758.
+  Harness: __STANDARDS__ + __ANSWER_STD__ injections in build-harness /
+  build-agent. Docs: operator-state #37 rewritten; CLAUDE.md tint mentions.
+
+Deploy: dashboard only (this increment). NOT merged — awaiting owner word.
+
+### Increment 123 (2026-08-18) — /sync-docs after R22/R23
+
+Drift fixes only: Coaching.gs added to the Subsystems list; INV-50's
+violation gate + queue-mapping wording (4% / getDeptQcdQueues_);
+regression S-232 tint standard; known-issues then-5% annotation;
+client-ui-conventions + README benchmark-tint paragraphs rewritten to the
+R23 three-tier / per-dept semantics; CLAUDE.md Direct bullet tint wording
+(byte-compensated). Weight: CLAUDE.md 175 KB / 200 KB budget (~25 KB
+headroom) — trim hunt still an open follow-on. 758/758, ratchet + INV-16
+green. Docs-only (no ci:ui needed).
+
+### Increment 124 (2026-08-18) — Coaching: ratio gate replaces the absolute floor
+
+First live `runCoachingPreview` (window 2026-08-03..08-14, 15 depts) returned
+20 flags and showed the absolute gate was inert: this is RING-level data, so
+every dept's team aggregate sits at 17-49% and a fixed 50% floor is above
+every agent everywhere. The only gate filtering was "5 pts behind team",
+which off a 39% average is ring-distribution noise.
+
+Owner ruling: replace the floor with a RATIO — flag when an agent answers
+less than half as often as their teammates.
+
+- `COACHING_ANSWER_BELOW_PCT_` (50) -> `COACHING_MAX_TEAM_RATIO_` (0.5);
+  gate is now `rate < teamRate * ratio`. `COACHING_BEHIND_TEAM_PTS_` (5)
+  stays as an absolute FLOOR beneath it, so a tiny team rate can't
+  manufacture flags (half of 3.5% is a 2.5-pt gap = noise). Volume gate
+  unchanged. New guard: teamRate <= 0 yields no flags.
+- Flags carry `teamRatioPct` ("answers N% as often as the team") and sort by
+  it (worst relative standing first, gap as tiebreak); the editor log line
+  and `thresholds.maxTeamRatio` follow.
+- Expected effect on the owner's live data: 20 -> ~10 flags; Rosie Sarkar
+  (0.503) and Monica Jeremiah (0.502) sit ON the line and may land either
+  side once computed from unrounded rates.
+
+NOT changed, per owner: cross-dept de-duplication (Shamir Alam is flagged
+under both Manual Mobility and Eligibility MM&R with identical whole-day
+figures — owner investigating) and the 0%-answered cases (owner confirms
+those are genuinely being rung and not answering, so they are real flags,
+not roster artifacts).
+
+Tests: coaching 11 (was 8) — ratio spare/flag pair, the ring-level
+whole-team-under-50% case, the points floor still holding, the zero-team
+guard. 761/761. Engine-only; still dark (no delivery).
+
+### Increment 125 (2026-08-18) — R24: workday prior windows, region header removed, scoped esc banner, IR perf
+
+Four owner items in one round:
+
+1. **INV-28 REDEFINED to working days (owner: "0% vs Sunday").** The shared
+   `computePriorWindow_` (Data.gs) + the client `resolveComparisonWindow_`
+   (script-6) now produce the immediately-preceding window with the SAME
+   WORKING-DAY count (Mon-Fri minus COMPANY_HOLIDAYS), ending on the last
+   working day before `from` -- a Monday compares to Friday. Zero-workday
+   (weekend-only) windows keep the legacy calendar math. Every consumer
+   inherits (E5 chips, Insights auto-prior, IR prevPeriod, Direct
+   kpisPrior, Inbound priors). INV-30 bumps for the keys that don't encode
+   the prior window: summary v19->v20, directCall v3->v4, inbound v8->v9
+   (IR/Insights keys carry the prior window, no bump). invariants.md
+   INV-28 + INV-30 rewritten; cache-version-sync tables updated.
+2. **Insights region headline REMOVED (redundant).** The #ins-region-head
+   live stats (answered · missed rings · abandoned % · window) on the
+   region <summary> retired -- the report's own sticky results header
+   carries the same facts. Summary stays as the collapse toggle with the
+   static sub line; insRegionHeadSync_ is a stub.
+3. **Overview escalations banner scoped.** The top-of-Overview strip now
+   shows managers only their own depts' OPEN escalations (server counts
+   were already dept-scoped; the show condition dropped 'review'-only
+   triggers); admins / ALL-sentinel viewers keep the company-wide banner.
+   View-as-Manager now narrows the strip client-side to the previewed
+   dept via byDept (was showing the admin's company-wide counts). Nav-tab
+   badge unchanged (worklist affordance).
+4. **IR (and Insights) load perf.** neonFetchDqeRows_ gained opts.agents
+   (prepared-statement IN filter, skip on empty/>300): IR + Insights now
+   fetch the 12-month union window for roster ∪ selection ONLY (~1 dept
+   instead of all 14 -- the whole-window json_agg was the dominant cost).
+   Aggregations only ever read roster/selected rows (team totals are
+   rosterSet-gated), so payloads are identical -- pinned by the existing
+   parity suites.
+
+Tests: prior-window pins recomputed (compute-summary E5, IR R8-D3,
+insights x2 -- fixtures moved off the weekend dates). 761/761; INV-16 +
+ratchet green. MERGED in PR #247 together with increment 126.
+
+### Increment 126 (2026-08-18) — Neon egress round (transfer cap incident)
+
+Owner hit Neon's monthly public-transfer cap mid-month (managers live).
+/broad-implement: ship R24 + three egress cuts. See
+.cycle/blocks/126-egress-broad-implement.md for the full summary block.
+Key design point: the 6 h report TTL required the reportFreshnessTag_ key
+suffix (latest DQE date) -- overviewCacheKey_ had no date anchor, so a long
+TTL alone would have hidden each morning's ingest for hours. dal-cutover's
+fake conn now mirrors the positional array protocol keyed off the real SQL.
+761/761; merged per the owner's "R24 deploy" instruction.
+
+### SESSION CLOSEOUT (2026-08-18) — all merged, deploy pending
+
+**Baseline:** everything through increment 126 is MERGED to main (PRs
+#245–#247); branch `claude/broad-scan-l9ojgm` == `origin/main` == 3fd04a8,
+working tree clean. 761/761 unit tests, INV-16, CLAUDE.md ratchet,
+cache-version-sync, and ci:ui (164 checks) all green on the merged state.
+
+**THE ONE BLOCKING THING: nothing since the manager rollout is DEPLOYED.**
+The dashboard's last owner deploy predates PRs #243–#247. Undeployed and
+waiting: live presence, R22 (clamp fade / 4% abandon standard / tiered Viol
+MTD), R23 (display-standards registry + dark coaching engine), R24 (workday
+prior windows / region-header removal / scoped esc banner / IR agent
+filter), and the Neon egress round. cdr-import is ALSO undeployed (the 4%
+violation gate lives there).
+  1. `clasp push -f` from repo root -> Manage deployments -> New version
+  2. `cd apps-script/cdr-import && clasp push -f`
+
+**NEON TRANSFER-CAP INCIDENT (live):** the owner exhausted Neon's monthly
+public-transfer allowance ~Aug 18. Reads fall back to the sheet
+automatically; the Neon-ONLY surfaces (Escalations, Inbound + heatmap,
+Direct, Caller Lookup, journey drills, agent wait chips) render their
+"unavailable" states until the Sep 1 reset. The egress round above is the
+fix (est. 20-50x cut on the dominant read path) but only once DEPLOYED.
+  - Optional stopgap: `DQE_READ_SOURCE=sheet` (property, reversible) to
+    conserve remaining transfer for the no-fallback surfaces.
+  - **SEP 1 (dated, do not miss):** run `backfillInboundCalls` +
+    `backfillOutboundCalls` (cdr-import editor) FIRST, then
+    `runNeonCoverageCheck`. `inbound_calls`/`outbound_calls` have no sheet
+    primary and rebuild only from `Call_Legs_*`, which prunes at ~14 days --
+    gap days that age out are permanently lost.
+  - Owner ruling recorded: NO sheet twins for Escalations / Inbound /
+    Direct (dual-source drift cost > outage-window benefit). Paid Neon tier
+    suggested as the structural fix; owner has not ruled.
+
+**OTHER OPEN OPERATOR ACTIONS:** queue-split flip checklist (#42); agent
+pilot go-live (#46); COMPANY_HOLIDAYS yearly (#27); optional Neon backup
+trigger (#28).
+
+**NEXT PLANNED WORK (owner-directed, not started):**
+  - **Outbound report**, parked until Neon is stable. Reads the UNUSED
+    Neon `outbound_calls` per-call table (NOT the Direct report, whose
+    outbound slice is a different, narrower population). Phases: 1 server
+    `OutboundReport.gs` + tests, 2 client page, 3 owner vetting, 4 manager
+    un-gate, **5 callbacks cross-reference (owner explicitly wants this in
+    the plan)** -- outbound calls to a hash that recently abandoned inbound,
+    i.e. "did we call back the ones we missed?". Caveats to caption: the
+    CDR cannot distinguish no-answer/voicemail/busy, so `connected` means
+    "something picked up"; attribute by the dialing agent's ROSTER dept,
+    not the raw CDR org label.
+  - **Coaching Phase 3** (delivery) once the owner has vetted a few
+    `runCoachingPreview` runs against the new ratio gate. Owner rulings:
+    email + card in a SEPARATE coaching worklist (never mixed into
+    customer-account Escalations), all depts, admin-only until released.
+    Owner is separately investigating the crossover double-count (Shamir
+    Alam appears under two depts) and confirmed 0%-answered agents are
+    genuine flags, not roster artifacts.
+
+**WHERE I LEFT OFF:** nothing in flight, nothing uncommitted. A fresh
+session can `/cycle-resume` for continuity or start directly on the
+outbound report once Neon is settled.
+
+### Increment 127 (2026-08-19) — /broad-scan + /broad-implement: the audit's top 5
+
+Fresh /broad-scan (3 stages) then /broad-implement of its final top 5. Full
+summary block: `.cycle/blocks/127-broad-scan-top5-broad-implement.md`.
+
+**The audit's shape.** Security came out clean — all 119 public RPC endpoints
+gated, checked mechanically then by hand; SQL parameterized; escaping and
+failure-handler coverage (a literal 1:1 withSuccess/withFailure ratio across
+all 12 client fragments) exemplary. The findings clustered instead in
+CROSS-PROJECT CONSISTENCY (6/10, the weakest dimension) and DEPLOYMENT HYGIENE
+(5/10) — i.e. not "is the code right" but "do the copies agree" and "is it
+running".
+
+**Implemented (773/773 tests, +12; INV-16 green; ci:ui pending in CI):**
+1. **F1** — `dataFilters.js` (Extraction Sidebar) row-40 still used the >0s
+   abandon rule that R20 moved to >1min in `autoImport.js`. The sidebar listed
+   rows the pipeline doesn't count, so a Spanish reconciliation read as "the
+   pipeline is under-counting" — from the tool built to prevent exactly that.
+2. **F2** — that duplication was unguarded. `check-duplicated-files.sh` gained
+   a normalized (indentation-agnostic) function-pair check for
+   `simulateSplitCol2`/`parseDurationDecimal`, AND a `cross-file-pins` "R20
+   row-40" pin, because the primitives guard alone would NOT have caught F1 —
+   the row RULES are structurally different code and can't be diffed.
+3. **F12** — System Health's failure classifier read 80 Pipeline Health rows
+   while the Overview banner (post-LM1) reads 250. Same eviction, opposite and
+   worse outcome: LM1 was a false WARN, this was a false ALL-CLEAR on the page
+   CLAUDE.md calls the single trustworthy pipeline signal. Now 250 + the OK
+   text states its measured scope.
+4. **F11** — the B-2 blindness in the QCD dimension. Two readers open the QCD
+   sheet with no `getQcdReadSource_` path; there was no tripwire (and both use
+   a string literal, so a constant-based one would have missed them). Added the
+   tripwire keyed on the getSheetByName CALL (prose-matching flags six
+   innocent files and gets muted), with a 3-entry allowlist carrying reasons
+   AND consequences — notably that QueueReportEmail's deliberate sheet read
+   BLOCKS retiring the QCD sheet, which #30's cutover framing implies is
+   possible. Also made `saveDeptConfig` fail OPEN on an empty queue universe:
+   it was rejecting every queue name while itself reporting "No QCD queues
+   found in recent data".
+5. **F5** — Neon transfer exhaustion was unmonitored; every probe said
+   "reachable" right up to the cliff, because a Neon that has spent its
+   allowance IS reachable. Added a month-to-date read-volume gauge (Script
+   Property, INV-01-clean, lossy by design) metering ALL 14 bulk json_agg
+   fetch sites — metering only DQE would under-report exactly the Neon-only
+   surfaces that go dark — plus a Health row that stays muted until the
+   operator declares `NEON_EGRESS_BUDGET_MB`, and is explicit that it is a
+   FLOOR (over budget proves a problem; under budget does not prove headroom).
+
+**F6 (undeployed rounds) was in the top 5 and is OPERATOR-ONLY — no code.**
+
+**⚠ DEPLOY ORDER (new, blocking).** cdr-import is undeployed, so the LIVE
+pipeline still runs the old >0s row-40 rule and the live sidebar currently
+AGREES with it. Deploying cdr-report alone would make the sidebar LEAD the
+pipeline — the same mismatch, inverted. Deploy cdr-import and cdr-report
+together (cdr-import also carries the 4% violation gate).
+
+**NOT walked:** the manual Regression Scenarios — headless session, no
+deployed build. S36 (Dept Config validation round-trip) directly covers a
+behavior change here and needs a human.
+
+**Open follow-ons from the audit, not implemented** (full detail + effort
+batches in the block): F10 `runNeonMirror_` has no runtime budget and wedges
+silently past the ~6-min ceiling; F3/F3b four 6h cache keys missing
+`reportFreshnessTag_` + two prefixes missing from the version-sync SPECS; F4
+unbounded login-notify emails past 300 keys; F7 ~1,700 lines of live,
+menu-reachable, zero-test cdr-report code (where F1 hid); F8 `time1Min` is
+">60s" not "~59s". Docs needing sync are listed in the block.
+
+**WHERE I LEFT OFF:** all five code findings implemented and green on the
+branch; nothing in flight. Next: commit + PR, then the blocking deploy-order
+action above. `/sync-docs` is warranted — six documentation updates are
+enumerated at the end of the block, including one where CLAUDE.md asserts as
+fact ("every heavy report key carries reportFreshnessTag_") something F3 shows
+is not true of four keys.
+
+### Increment 128 (2026-08-19) — Batch A (operator) + Batch B (silent-failure closers)
+
+PR #249 (broad-scan top 5 + doc sync) MERGED to main first. Owner then
+completed **Batch A**: cdr-import + cdr-report + dashboard all DEPLOYED,
+`runLiveSmoke` all passed, `NEON_EGRESS_BUDGET_MB` set to 5000. That closes
+the deploy gap that had been the audit's #1 finding twice running — the 4%
+violation gate and the Neon egress cuts are now actually running.
+
+**Batch B shipped (779/779, +6):** the remaining silent failures.
+
+1. **B1/F10 — the deferred mirror could wedge forever.** `runNeonMirror_` had
+   no clock check, so a multi-day Neon outage grew the queue until one pass
+   exceeded the ~6-min ceiling; then it died at the same point every run.
+   Silent twice over: the queue rewrite is at the BOTTOM (timeout preserved
+   the queue, emitted no summary) and the IMP-6 counter increments only on a
+   THROW (a timeout never counted an attempt, never hit the retry cap, never
+   emailed). Now `NEON_MIRROR_BUDGET_MS` (4 min default), untried dates keep
+   their attempt count, and a `neonMirror:budget` row says what was left.
+2. **B2/B5 — four 6 h keys joined `reportFreshnessTag_`.** The inbound insurer
+   drill was the real one: it hangs off a byInsurer ROW whose key DOES carry
+   the tag, so a same-day re-import refreshed the row and left the drill
+   disagreeing for 6 h. No INV-30 bump (suffix, not an aggregation change —
+   the CORE-3/S2-0 precedent).
+3. **B5/F3b — `agentHome`/`agentHist` were in the INV-30 docs but not in
+   cache-version-sync's SPECS.** Documented and unenforced: the one
+   combination that suite exists to prevent.
+4. **B3/F4 — login-notify emailed on EVERY visit past the 300-key cap.** The
+   old branch notified WITHOUT recording, so each visit was a fresh "first
+   sighting". Now evicts oldest + records: one email per address. The
+   trade-off it was defending (extra signal beats blindness) was being paid
+   for out of the MailApp quota that carries alerts and digests.
+5. **B4 — Health row for `MailApp.getRemainingDailyQuota()`.** Same shape as
+   the F5 Neon gauge: one shared exhaustible resource, silent when dry.
+   Absolute floor (50), not a percentage — the quota is plan-dependent.
+
+**Harness:** `fakeSheet` gained `Range.clearContent` (a real method that was
+missing; a no-op stub would have made the B1 tests pass vacuously) and the
+MailApp shim gained `getRemainingDailyQuota`.
+
+**Found but NOT fixed (out of the named scope):** `neonAgentExts:v1`
+(NeonRead.gs) is a 6 h cache with no freshness anchor. Low impact — it backs
+the derived `getDeptQueueExts_` path and scope is locked to `roster` on the
+main surfaces, so floaters don't render there anyway.
+
+**WHERE I LEFT OFF:** Batch B committed + pushed to
+`claude/broad-scan-8dgd6m` (re-branched from merged main per the
+already-merged-PR rule). PR not yet opened. Full block:
+`.cycle/blocks/128-batch-a-b-broad-implement.md`.
+
+**Doc sync IS warranted before/with the PR** — six items in the block, and
+one is newly stale in the GOOD direction: the "Not yet true of every 6 h key"
+clause the last /sync-docs added is now false, because Batch B fixed all four
+keys it named.
+
+**Still open from Batch A (human):** walk S36; confirm the two new Health rows
+render. **Dated:** Sep 1 backfills before `runNeonCoverageCheck`.
+**Note on the budget value:** 5000 MB = 5.24 GB decimal, so an exact 5 GB
+plan wants 4768; the gauge is a floor either way.
+
+### Increment 129 (2026-08-20) — Batch C: the drift-guard sweep
+
+PR #250 (Batch B + doc sync) MERGED first (ui-harness red on its first CI run
+was an environment blip — logs rotated before they could be read, base was
+green, the exact head passed the full 164-check gate locally; single re-run
+went green and auto-merge landed it). Batch C then shipped (783/783, +4):
+
+1. **C1 — the behavioral parity suite** (`qcd-sidebar-parity.test.js`), the
+   guard that would have caught F1 as BEHAVIOR rather than as a threshold
+   token. One shared 21-row Raw Data fixture drives `calcQcdReport` end to
+   end, then drives `getExtractionDataJSON` per cell against the pipeline's
+   OWN output grid; parity = sidebar row count === cell value across rows
+   3,4,5,6,13,35,36,37,39,40,43 × cols C/D/E, zero cells must refuse. No
+   expected numbers in the parity test, so an unmirrored edit to EITHER
+   file's ~50 row rules fails it. Negative-tested from both sides (sidebar
+   F1-reversion → "(40,3) wrote 4, extracted 5"; pipeline perturbation →
+   "(6,3)/(6,5)"). Also the first test coverage dataFilters.js has ever had.
+2. **C3** — the R20 comment's "(~59s)" corrected: time1Min is exactly 60s
+   with strict >, so the rule is "MORE than 60s". Comment now also records
+   that AbandonedFilter.js's >0:00:59 is a SEPARATE deliberate threshold.
+3. **C2** — CLAUDE.md habit 3 gains the corollary: a new convention must
+   answer "what enforces this?" in the same commit (F2/F3b/F11 were each
+   that question unasked).
+
+**FOUND while building C1, reported not fixed (block 129 has full detail):**
+- **Row 34 is incoherent across three surfaces** — the pipeline's
+  r34_abnd1m/2m counters are DEAD (totalRowMap overwrites row 34 as
+  sum(35..37)), the sidebar has its own live row-34 predicate matching a
+  DIFFERENT population (a status-3 internal abandon >1m double-counts in the
+  35+37 sum but extracts once), and the sidebar's total-row refusal list
+  omits 34. Needs an owner ruling on what row 34 MEANS.
+- **Window-edge divergence, row 35 col D**: sidebar dp2/dp3 lack the
+  pipeline's start<3PM clause — the F1 class, at the window edge.
+- dashboardCDR.js remains the zero-test half of F7.
+
+**WHERE I LEFT OFF:** Batch C committed to `claude/broad-scan-8dgd6m`
+(re-branched from merged main), about to push + PR per the session's standing
+flow. Doc updates queued for /sync-docs: the test-suite roll + the Extraction
+Sidebar bullet's "the rest of the row rules are not [pinned]" clause, now
+partly stale in the good direction.
+
+### Increment 130 (2026-08-20) — Follow-ons + Batch E (resilience & capacity)
+
+Shipped on the batch-C branch (810/810, +27; INV-16 green; the FULL rendered-UI
+gate run locally with playwright — 164+ checks, all stages passed — against the
+script-10 change). Full block: `.cycle/blocks/130-follow-ons-batch-e-broad-implement.md`.
+
+1. **FO-1** — `neonAgentExts:v1` (the LAST unanchored 6 h key) joined
+   reportFreshnessTag_ + the version-sync SPECS; the CLAUDE.md clause naming
+   it as the exception now says "every 6 h key carries an anchor" — true for
+   the first time.
+2. **FO-2** — the row-35 window-edge divergence FIXED (sidebar dp2/dp3 gained
+   the pipeline's start<3PM clause; rows 36/37 verified clause-for-clause
+   clean at the same time) + pinned by an edge-time parity fixture row.
+3. **FO-3** — dashboardCDR.js has its first tests ever: 6 on the pure
+   aggregation helpers incl. the totals row's recompute-not-sum Rate/ATT.
+   The 480-line core stays a follow-on (needs the C1 fixture treatment).
+4. **E1 — retention-horizon monitor.** `ncSurvivingCallLegsDates_` +
+   `ncRetentionRisk_` (NeonCoverage.gs) + two Health rows: 'legs-horizon'
+   (FAST, sheet-only — renders mid-outage, when it matters) and
+   'retention-risk' (neon part, shared conn) listing the SURVIVING dates the
+   per-call tables are missing, each with its ~last recoverable day. Neon
+   unreachable → the row IS the Sep 1 runbook, naming the oldest surviving
+   sheet. NC_RETENTION_DAYS_ mirrors cdr-import's RETENTION_CUTOFF_DAYS
+   (sync obligation — recoverability itself is derived from real sheets).
+5. **E2 — escalations outage snapshot.** getEscalations stores open rows in
+   chunked Script Properties (age-gated refresh, torn-write-safe) and serves
+   them viewer-scoped with meta.snapshotAsOf when Neon is unreachable (both
+   the no-conn path and mid-query death); client renders a read-only banner.
+   WRITES UNTOUCHED (INV-55) — a snapshot can't drift while the only writer
+   is down, which is why this doesn't contradict the no-sheet-twins ruling.
+   Note: protects the NEXT outage — nothing to serve until Neon returns once.
+6. **E3 — build stamp.** deploy.sh stamps BuildStamp.gs (UTC+sha+branch) at
+   push, trap-restores the committed placeholder; a bare clasp push ships
+   "unstamped", which is itself the finding. Health 'build-stamp' row, always
+   muted.
+
+**NOT implemented, deliberately:** the row-34 three-way incoherence — still
+awaiting the OWNER'S RULING on what row 34 means (block 129 has the full
+write-up). AbandonedFilter's >0:00:59 stays documented-deliberate.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries Batch C increment 129 + this). NO PR opened yet — batches C + this
+one go in a single PR when the owner says. /sync-docs queued: six items in
+block 130 (System Health bullet's 3 new rows, test-suite roll ×3, the
+Extraction Sidebar bullet's now-stale "not pinned" clause, op-state #43
+sync obligation + escalations snapshot, README deploy stamp, INV-55 note).
+
+### Increment 131 (2026-08-20) — F-e: coaching delivery (email + separate worklist)
+
+**Block:** `.cycle/blocks/131-f-e-coaching-delivery-broad-implement.md`
+
+Phase 3 of the turnover-suggestion engine: the Phase-1 flags (increment 124's
+dark preview) now DELIVER. All owner rulings honored: SEPARATE worklist (never
+mixed into customer-account Escalations), all depts, ADMIN-ONLY email until
+released, no cross-dept de-dup, 0%-answered flags are genuine.
+
+1. **Server (Coaching.gs).** Neon `coaching_flags` (auto-DDL + partial unique
+   open index — one open card per (dept, agent); closed history never blocks a
+   re-flag; no sheet twin, flags re-derive from DQE). Weekly run:
+   preview → pure diff (NEW insert+email / CONTINUING metrics-refresh, no
+   email / RECOVERED-OPEN reported, NEVER auto-closed — the coach decides).
+   One txn; email only on NEW (B3 quota lesson), admins only, plain-text
+   watchdog family, deep link #/admin/coaching. Flag-gated engine:
+   COACHING_DELIVERY_ENABLED (default OFF — ships dark), OPS-8 outcome props,
+   Monday-8AM install/uninstall, run-now manual fire. Worklist RPCs:
+   getCoachingWorklist (admin, open/closed/all, uncached, LIMIT 300) +
+   updateCoachingFlagStatus (full INV-01 data-mutation set; open-only UPDATE
+   → race-safe "not open any more" error).
+2. **Health.** trg-coaching svc row WITH its flagProp (the install-readiness
+   rule, same commit) + out-coaching outcomes row.
+3. **Client.** Admin ▾ → Coaching (route /admin/coaching — the email's deep
+   link). Health-modal shape; F10-idempotent render; dsConfirm_-gated
+   Resolve/Dismiss with optional ≤500-char note; delivery controls (Run now
+   confirm-gated — it persists AND emails). Zero styles.html changes.
+4. **Rider: row-34 RULED.** Owner: row 34 = "CSR Total Calls" — the SUM
+   (direction (a)). known-issues entry retitled RULED; parity-suite scope
+   note points there; the CODE fix (sidebar refuses 34 + dead counters
+   deleted) is a named follow-on, not smuggled into this scope.
+
+Tests 819/819 (+9 delivery tests; fake conn models txn + executeUpdate).
+ci:ui full gate run after the client changes. Engine ships DARK — deploy is
+safe anytime; arming is an explicit admin action with a documented
+one-larger-first-email expectation.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129 + 130 + this). NO PR — not requested this round.
+/sync-docs queued: CLAUDE.md coaching parenthetical, Operator State #48
+(COACHING_DELIVERY_ENABLED), tests/README coverage map.
+
+### Increment 132 (2026-08-20) — Batch G: the Outbound report
+
+**Block:** `.cycle/blocks/132-batch-g-outbound-report-broad-implement.md`
+
+The scan's one new-capability item: `outbound_calls` gains its first
+analytical surface (route `#/report/outbound`, Reports ▾ → Outbound,
+admin-only while vetted — the Inbound/Direct model with the latent manager
+path). Headline: "did we call back the ones who abandoned?"
+
+1. **Callback linkage.** Abandon denominator = EXACTLY the Inbound report's
+   Abandoned population (reuses inboundDeptPredicate_ + inboundWindowClause_
+   verbatim — work-window owner ruling honored, pinned in the new suite since
+   the inbound-window-scope count guard is InboundReport.gs-scoped). Each
+   abandon LATERALs to the EARLIEST outbound with callee_hash = caller_hash
+   within 3 days; match deliberately unscoped by dept/agent and uncapped by
+   the report's `to`. Anonymous abandons excluded from the rate denominator.
+   Median time-to-callback via percentile_cont.
+2. **Both mandated caveats are structural, not just captions:** "connected"
+   is the disclosed stricter subset (CDR can't tell no-answer/voicemail/
+   busy), and attribution is by ROSTER dept — the SQL never reads
+   outbound_calls.department (test-pinned); buildDeptsByAgent_ maps dialers,
+   dept view discloses off-roster exclusions, company view labels crossover
+   agents with all homes and no-roster dialers as "Unrostered".
+3. **Plumbing:** one json_build_object round trip, egress-metered,
+   `outboundReport:v1` + freshness tag (SPECS row added same commit — C2),
+   uncached unavailable, csvSafeCell_ CSV, C-8 stale token, coverage note.
+
+Tests 829/829 (+10). ci:ui full gate after the client changes. v1 scope:
+KPIs + callback block + sortable agent table + CSV; deferred (in block):
+daily series/chart, not-called-back drill list, kpisPrior chips, per-dept
+company cards.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129–132). NO PR — not requested. /sync-docs queued (see
+block 132): the outbound bullet's "sole consumer: Caller Lookup" clause is
+now stale, INV-30 gains outboundReport:v1, test-suite rolls.
+
+### Increment 133 (2026-08-20) — Follow-ons: row-34 code fix + Outbound v2
+
+**Block:** `.cycle/blocks/133-follow-ons-outbound-row34-broad-implement.md`
+
+1. **Row-34 fix landed** (the ruling's direction (a), both files together):
+   dataFilters.js refuses row 34 as a total row (predicate removed, 34 out of
+   isGlobalExcRow); autoImport.js's dead r34 counters deleted (totalRowMap's
+   sum — the ruled meaning — untouched, sheet output byte-identical);
+   qcd-sidebar-parity pins the refusal; known-issues entry marked APPLIED.
+2. **Outbound report v2** (prefix bump v1→v2, INV-30):
+   - CORRECTNESS: the abandon denominator now excludes is_internal rows —
+     v1 missed the clause every inbound metric query carries, so internal
+     test calls inflated the callback denominators. Factored into
+     outboundAbandonWhere_, used by report + daily + prior + drill alike.
+   - pendingTail (tracked abandons still inside the 3-day window) as a real
+     count on the Called-back tile; per-day callback series + safeChart_
+     line chart (THEME, datalabels off, <2 days hidden); INV-28
+     kpisPrior/callbackPrior via computePriorWindow_ with the prior agents
+     routed through the SAME roster filter; getOutboundUncalled — the
+     not-called-back drill (same lateral so it can't disagree with the KPI,
+     cap 200, no caller identity, rows reuse heatCellDetailHtml_ + the
+     "↳ path" journey chips).
+   - The window-clause pin upgraded to the count-based every-FROM pattern
+     in the new file (the inbound-window-scope guard is file-scoped).
+
+Tests 836/836 (+7); INV-16 green; full ci:ui gate green. Per-dept company
+cards for Outbound STILL deferred — now with the stated design blocker
+(crossover agents have multiple roster homes; grouping needs an owner
+ruling; the flat multi-home-label table dodges it honestly).
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(carries increments 129–133). NO PR — not requested. /sync-docs queue
+updated in block 133 (row-34 sidebar clause now RESOLVED wording; INV-30
+outboundReport is v2; plus the earlier queued items from 131/132).
+
+### Increment 134 (2026-08-20) — Three owner rulings: Option C, row-34 probe, dashboardCDR core coverage
+
+**Block:** `.cycle/blocks/134-owner-rulings-probe-cdr-core-broad-implement.md`
+
+1. **Option C RULED** — Outbound company view stays the flat table (per-dept
+   cards rejected: crossover agents force double-count or misattribution).
+   Ruling comment at the render site; the block-133 follow-on is CLOSED.
+2. **Row-34 probe** — `previewRow34Overlap` (cdr-import, CDR Tools menu,
+   READ-ONLY) counts the internal+status-3 double-count shape per surviving
+   Call_Legs date with a plain verdict line. Pure core
+   `countRow34OverlapRows_` is pinned BEHAVIORALLY: its r35/r37 counters must
+   equal calcQcdReport's own written row 35/37 E cells on a shared fixture.
+   OPERATOR: run it once after the cdr-import deploy; zero ⇒ close the
+   known-issues double-count note as latent-only.
+3. **dashboardCDR core coverage RESOLVED** — new dashboard-cdr-core.test.js
+   (9 tests, local recording fake — deliberately not a loosening of the
+   shared strict harness) drives generateCustomReportCore_ end to end:
+   header shapes both modes, list-multiplier aggregation, F-11 display-read
+   TTT (junk values grid + display strings), exact-dept match, D-3 contacts
+   neutralization, D-6 alerts, diagnostics panel, chart counts.
+   **The suite immediately EXPOSED A REAL BUG and it is FIXED**: the T-7
+   full-height panel clear wiped fresh report columns whenever a report was
+   WIDER than the previous run's remembered panel column (narrow run →
+   comparison run lost TTT(P)/ATT(C)/ATT(P) — the REP-1 clipping class
+   reintroduced). Fix splits the clear (strip above the report always;
+   full height only for old-panel columns beyond the render clear's reach);
+   both directions pinned (wide-report survival + the original T-7
+   stale-panel wipe).
+
+Tests 847/847 (+11). INV-16 green. New follow-on noted: agent NAMES bypass
+crSheetSafeCell_ in the table col A + diagnostics subtotals (contacts-only
+D-3 coverage) — 3-site one-liner when taken.
+
+**WHERE I LEFT OFF:** committing + pushing to `claude/broad-scan-8dgd6m`
+(increments 129–134). NO PR — not requested. Deploys owed: cdr-import
+(probe), cdr-report (clipping fix). /sync-docs queue grows: probe as the
+row-34 resolution instrument; dashboard-cdr-core in the rolls; block-130's
+"480-line core stays a follow-on" clause resolved.
+
+### Increment 135 (2026-08-20) — The CLAUDE.md trim/extraction pass
+
+**Block:** `.cycle/blocks/135-claude-md-trim-broad-implement.md`
+
+The overdue doc-maintenance task (headroom had fallen to 12.8 KB):
+187,222 → 175,480 bytes (−11.7 KB; 28.6 KB headroom). **Both grandfathered
+ratchet maps are now EMPTY** — the five seeds retired by extraction or
+split (Role model → four bullets; Sub-queue combined view → two, incl. a
+standalone "Queue-split narrowing (Phase 2)" bullet; Neon read-back
+5.5→3.0 KB; Neon write discipline 4.9→3.8 KB; Direct-extension
+4.8→3.0 KB), so every prose bullet answers to the flat 4,096 B budget and
+the map comment forbids re-seeding. The Key-commands suite enumeration
+moved to tests/README.md (its designated home, enriched); the third copy
+in Cycle Workflow Config compressed to a pointer; the dqe_history index
+DDL relocated to Operator State #19. Reference-resolution audit in the
+block: no rule deleted, every dropped fix code/identifier still resolves
+(fix-history carries the extracted stories verbatim).
+
+Tests 847/847 (incl. the now-stricter flat ratchet). No production code
+touched; no deploy needed.
+
+**WHERE I LEFT OFF:** branch restarted from merged main (PR #251), trim
+committed + pushed to `claude/broad-scan-8dgd6m`. NO PR — not requested.
+Next size lever when needed: an F8-style SECTION split, not more shaving.
+
+### Increment 136 (2026-08-20) — Follow-on: D-3 completed for names (dashboardCDR)
+
+**Block:** `.cycle/blocks/136-d3-name-neutralization-broad-implement.md`
+
+The one actionable code follow-on on the ledger (block 134): dashboardCDR
+wrote feed-derived NAMES raw — only contacts cells were D-3-neutralized.
+All five sites now route through `crSheetSafeCell_`: table col-A agent
+name, pie-chart temp labels, writeTop5 contact names, diagnostics detail
+contact names, diagnostics agent subtotals. Pinned by one structural test
+(no cell in the written grid may hold a bare formula-leading string;
+`'=DROP()` / `'=EVIL(7)` survive prefixed). 848/848.
+
+Remaining ledger is deliberately non-code now: owner-gated un-gatings +
+flips, operator deploys/backfills/probe run, and the block-135
+"when needed" doc levers (headroom healthy).
+
+**WHERE I LEFT OFF:** committed + pushed to `claude/broad-scan-8dgd6m`
+(carries increment 135 + this since PR #251 merged). NO PR — not
+requested. Deploys owed: dashboard (nothing new since #251), cdr-report
+(row-34 refusal + T-7 clip fix + this), cdr-import (probe + dead-counter
+removal).
+
+### Increment 137 (2026-08-21) — Row-34 CLOSED (probe measured zero); deploys confirmed
+
+Owner deployed all three projects and ran `previewRow34Overlap` over all 10
+surviving Call_Legs dates (2026-08-07..08-20, ~139K rows): **E-overlap = 0
+and colC-overlap(max) = 0 on every date** — the internal+status-3 shape
+does not occur in this install, so row 34's ruled sum has been exactly
+right all along and column C is proven clean by the superset check.
+known-issues entry retitled CLOSED (latent only) with the measurement and
+the re-open rule (non-zero on a future probe run). No code change — a zero
+measurement warrants no predicate edit.
+
+Operator ledger after this: Sep-1 backfills (backfillInbound/OutboundCalls
+before runNeonCoverageCheck), arm coaching delivery when ready, and the
+owner-gated releases (Inbound/Direct/Outbound un-gating, queue-split flip
+#42, agent role #46). All code follow-ons drained.
+
+**WHERE I LEFT OFF:** doc-close committed + pushed to
+`claude/broad-scan-8dgd6m` (restarted from merged main / PR #252). NO PR —
+not requested; it's a two-file doc/state commit, fine to fold into
+whatever goes next.
+
+### Increment 138 (2026-08-21) — Outbound vetting instrument (release-enablement)
+
+**Block:** `.cycle/blocks/138-outbound-vetting-probe-broad-implement.md`
+
+`runOutboundVettingCheck` (OutboundReport.gs — editor-run, admin-gated,
+read-only; OUTBOUND_VETTING_FROM/_TO/_DEPT/_SAMPLE props, defaults = last
+14 days company-wide). Leg A: LIVE two-code-path parity — the outbound
+callback.abandonedTotal vs computeInboundReport_'s own kpis.abandoned
+(verified identical population: range + dept pred + work window +
+is_internal). Leg B: up to N called-back pairs + N not-called-back
+abandons each re-verified by a separately-written bound-param query
+(hash equality + timestamp ordering), call ids logged for Caller Lookup
+eyeballing. OPS-8 verdicts; zero abandons ⇒ INCONCLUSIVE (Batch-6 gate
+contract) — never un-gate on INCONCLUSIVE/FAILED/MISMATCH. +6 tests
+(854/854; harness gained Util.gs + capture/restore of the stubbed
+compute globals). CLAUDE.md Outbound bullet names the tool (the
+Inbound-bullet pattern).
+
+**Outbound release runbook now:** deploy dashboard → (recommended)
+backfillOutboundCalls → runOutboundVettingCheck → on 'ok', the one-line
+gate removal + menu un-hide, adding the ci:ui driver visit + S44 in the
+same change.
+
+**WHERE I LEFT OFF:** committed + pushed to `claude/broad-scan-8dgd6m`
+(branch carries the row-34 closure doc commit + this). NO PR — not
+requested.
+
+### Increment 139 — heatmap sheet fallback (+ JDBC fail-fast) (2026-08-24)
+
+`/broad-implement heatmap sheet fallback` — the full Phase-0-through-4 plan the owner
+approved after the Insights heatmap went dark in the Neon usage-ceiling outage.
+
+- **HF-0 JDBC fail-fast timeouts** (`connectTimeout=10&socketTimeout=120&loginTimeout=10`)
+  on ALL Neon connection builders — the plan named 3; the new cross-file-pins sweep found 2
+  more (neonbackfill.js, OrphanFix.gs). Fixes the hanging-connect class that silently ate
+  the 2026-08-21 Daily Queue Report day.
+- **HF-1/2 export extension + schedule**: 'Inbound Calls' tab cols 16-17 (Call Start /
+  Is Internal, '@'-formatted, REP-10 widen, spill-safe), daily 9 AM trigger + 400-day prune,
+  `inboundExport` Pipeline Health rows (log-only on Neon-down).
+- **HF-3/4 the fallback**: getInboundHeatmap degrades to the tab on any Neon failure —
+  mirrored bucketing + two-arm dept attribution (heatmap-fallback.test.js pins with boundary
+  fixtures), never cached, meta.fallbackSource/fallbackThrough + client caption, drill
+  suppressed (Neon-only).
+- Tests 854 → 870; ci:ui full gate passed; INV-16 re-synced; CLAUDE.md guards green.
+- Docs: Operator State #49 (trigger install + one-time historical re-export), INV-44
+  `inboundExport` vocab, known-issues "Heatmap sheet fallback: honest limits", two CLAUDE.md
+  bullet updates.
+- Block: `.cycle/blocks/139-heatmap-sheet-fallback-broad-implement.md`.
+
+Open (owner): deploy all THREE projects; install the export trigger; one-time
+`exportInboundCalls('<capture-start>','<today>')` after Neon recovers; the unchanged ledger
+(Outbound release runbook, 08/20 backfills before ~Sep 3, coaching arming).
+
+**WHERE I LEFT OFF:** increment 139 committed to `claude/broad-scan-8dgd6m` (on top of
+a675451's vetting probe); branch is 3 commits ahead of main, un-PR'd — PR only when the
+owner asks.
+
+### Increment 140 — egress attribution + Direct report sheet fallback (2026-08-24)
+
+`/broad-implement` continuation of the fallback/egress thread ("Yes go ahead" on the two
+recommended items).
+
+- **EA-1 per-surface egress attribution**: neonNoteEgress_(bytes, surface) with a capped
+  by-label map (24, overflow→'other'); readNeonEgress_ returns `top`; the Health page's
+  read-volume row appends "top: dqe N MB, ..." — the egress-reduction levers now get picked
+  from evidence. All 19 callsites labeled.
+- **DC-1 Direct Call report sheet fallback**: `Direct Call History` is the PRIMARY (Neon the
+  mirror), yet the report went dark on Neon failure. All three failure branches now re-derive
+  the payload from the sheet through the SHARED directCallShapePayload_ shaper; aggregation
+  mirror pinned by direct-fallback.test.js's independent-aggregation SOURCE PARITY fixture;
+  uncached; client note discloses completeness (unlike the heatmap's "data through" ceiling).
+- Tests 870 → 880; ci:ui full gate passed (script-9 touched); INV-16 green; CLAUDE.md
+  guards green. Docs: #47 guidance, CLAUDE.md two bullets, known-issues DC-1 note.
+- Block: `.cycle/blocks/140-egress-attribution-direct-fallback-broad-implement.md`.
+
+Open (owner): deploy the DASHBOARD (this increment) + the increment-139 three-project deploy
+if not yet done; read the egress "top:" ranking after ~a week, then pick the lever (payload
+slimming / rollups — the deferred follow-ons). Unchanged ledger: Outbound release runbook,
+08/20 backfills before ~Sep 3, coaching arming, #49 export-trigger install + one-time
+re-export.
+
+**WHERE I LEFT OFF:** increment 140 committed + pushed to `claude/broad-scan-8dgd6m`
+(4 commits ahead of main, un-PR'd — PR only when the owner asks).
+
+### Increment 141 — internal transfer paths reach the receiving dept (2026-08-24)
+
+Owner-approved reversal of the Round-16 drop, plus (increment 140b) the freshness
+weekend/holiday credit.
+
+- **Freshness credit**: the header pill AND the Overview pipeline banner now discount
+  weekend/company-holiday days (24h each) before the 36h staleness verdict, reusing the
+  watchdog's OPS-7 helper server-side and a mirrored client one. Friday's data no longer
+  reads red on Monday. Pinned by freshness-weekend.test.js (banner behaviorally, pill by
+  source tripwire — its staleness lives in the assembled-client IIFE).
+- **IT-1 internal transfer paths**: a uniquely-matched internal transfer-abandon group is
+  now WRITTEN (was dropped), linked via related_call_id, and prefixed with the reconstructed
+  origin hop (origin queue → answering agent, flagged origin/transfer, rendered "before
+  transfer"). Fixes the receiving dept's "↳ path" button resolving to not-captured — the DQE
+  queue-only sentinel renders that button for any abandon with wait > 60s, internal included.
+  Owner's preview on 08/21: 11 candidates, 10 unique, 0 ambiguous, 6 past the 60s threshold.
+- Tests 886 → 888; ci:ui gate passed twice; INV-16 green.
+- Blocks: `.cycle/blocks/141-internal-transfer-path-broad-implement.md`.
+
+Open (owner): deploy cdr-import + dashboard; verify a receiving-dept path drill once Neon is
+back; run backfillInboundCalls to give already-imported dates their records. Follow-on:
+CHAINED transfers (~9%, needs hop-following, previewInternalTransferChains scopes it).
+
+**WHERE I LEFT OFF:** increments 140b + 141 committed + pushed to `claude/broad-scan-8dgd6m`
+(2 commits ahead of merged main, un-PR'd — PR only when the owner asks).
+
+### Increment 142 — follow-on: client holiday-check consolidation (2026-08-24)
+
+`/broad-implement follow-on items`. Most of the standing follow-on list turned out to be
+owner-gated or measurement-blocked; one item was genuinely actionable.
+
+- **FO-1 (done)**: the company-holiday range test had FOUR inline client copies and had
+  already drifted (script-6-ir guarded malformed entries, the other three did not). All now
+  call `isCompanyHolidayIso_` (script-1-core), which adopted the guard. A cross-file-pins
+  tripwire fails if a fifth copy appears — nothing behavioral can see this class, since every
+  copy renders fine and is only wrong on a holiday.
+- **FO-2 (blocked, not built)**: chained internal transfers. `previewInternalTransferChains`
+  is a neighborhood-scan CLASSIFIER (one-hop / two-hop / internal-origin / via-queue /
+  no-source), not a resolver — and a `no-source` case cannot be fixed by hop-following at any
+  depth. One unclassified sample + Neon down = guessing. UNBLOCK: run that diagnostic (no Neon
+  needed) and bring the tally.
+- Everything else on the list is an owner ruling (sub-60s entry point, inbound-lite fallback,
+  Direct dal-cutover, more fallbacks) or needs data that does not exist yet (egress levers —
+  EA-1 shipped yesterday and Neon is down, so the ranking is empty).
+- Tests 888 → 889; ci:ui full gate passed (load-bearing: the unit suite proves the assembled
+  IIFE parses, only the gate proves a cross-fragment identifier resolves).
+- Block: `.cycle/blocks/142-follow-on-holiday-dedup-broad-implement.md`.
+
+**WHERE I LEFT OFF:** increment 142 committed + pushed to `claude/broad-scan-8dgd6m`
+(3 commits ahead of merged main, un-PR'd — PR only when the owner asks).
+
+### Increment 143 — chain diagnostic: temporal guard (2026-08-24)
+
+Owner ran `previewInternalTransferChains(2026-08-21)`: 1 chained case, reported
+"1-HOP RESOLVABLE (unique)". Reading the evidence lines DISPROVED that verdict — the leg
+the resolver used (ext 363 ringing ext 279) starts at 07:30:43, **946s AFTER** the abandon
+it supposedly caused (07:14:57, ended 07:20:06). Cause: `overlapRootsFor(Y)` constrains the
+UPSTREAM agent to be on a captured call at T, but nothing constrained the Y→X hand-off leg,
+so "Y rang X at some point that day" counted as evidence of a transfer before the abandon.
+
+- Fixed the DIAGNOSTIC only (read-only, editor-run, not wired into any pipeline): `deliveredAtT`
+  requires X to have been on an answered call spanning T (±5s — the same overlap rule the real
+  R11-N matcher applies to the answering agent), feeding both the 1-hop and 2-hop traces.
+- New SELF-ORIGINATED bucket + tally entry for the shape this case actually is: nobody handed
+  X a caller, so X dialed the queue themselves — no upstream journey exists and hop-following
+  cannot fix it at any depth.
+- Tests 889/889 unchanged (the diagnostic is log-only and not unit-covered — honest answer to
+  "what enforces this?": nothing automated; it is a read-only scoping tool).
+- NOT built: hop-following. The one observed case now looks unresolvable-by-design rather than
+  a missing feature; re-run the tightened diagnostic before spending anything on a resolver.
+
+**WHERE I LEFT OFF:** increment 143 committed + pushed to `claude/broad-scan-8dgd6m`
+(4 commits ahead of merged main, un-PR'd). Owner to re-run
+`previewInternalTransferChains` AFTER deploying cdr-import.
+
+### Increment 144 — internal-origin records name the requester (2026-08-24)
+
+`/broad-implement Step 3` (+ Step 4 investigated, not built).
+
+- **IT-2**: `origin_agent` / `origin_dept` on internal-origin records, read from the leg's
+  CALLER columns. Root cause of the hole: `firstAgent` scans CALLEE names and an
+  internal-origin group's only callee is the queue, so first_agent is structurally always
+  null for this population. The drill now renders "Internal request from <name> · <org
+  label>" — the line that reclassifies the abandon from "lost customer" to "colleague needed
+  help". Guards + PHI rules copied from firstAgent, not reinvented; NULL on every
+  externally-originated row.
+- Tests 889 → 892 (incl. an explicit assertion that firstAgent STAYS null, so a future
+  "fix" that papers over the hole by reusing it fails); ci:ui full gate passed.
+- **Step 4 investigated**: the data exists (outbound_calls captures the requester's patient
+  call) but the full drill link crosses the F-4 per-dept entitlement boundary — the receiving
+  dept would drill the origin dept's customer call. Recommended a metadata-only variant
+  instead. Owner deciding; pros/cons delivered in chat.
+- Block: `.cycle/blocks/144-internal-origin-agent-broad-implement.md`.
+
+**WHERE I LEFT OFF:** increment 144 committed + pushed to `claude/broad-scan-8dgd6m`
+(8 commits ahead of merged main, un-PR'd). Awaiting the owner's Step 4 ruling.
+
+### Increment 145 — Step 4: cross-dept outbound journey link (2026-08-24)
+
+`/broad-implement Step 4` — owner chose **Option A** (full drill link) over the metadata-only
+variant I recommended. Ruling recorded in docs/known-issues.md.
+
+- **Capture**: `outboundBusy` index (same group shape as outboundCalls.js); an internal assist
+  with no concurrent captured INBOUND links to the requester's concurrent OUTBOUND call.
+  Unique-match only; an inbound match always wins. `related_call_kind` says which table
+  `related_call_id` points at (NULL = inbound, for pre-Step-4 rows).
+- **Read**: `getCallJourney({kind:'outbound'})` → `getOutboundCallJourney_`. The gate is a
+  server-re-derived CAPABILITY: a manager reaches outbound call O only if an internal record
+  links to it AND that record passes the unchanged F-4 gate on their OWN dept. No link = no
+  access, however permissive the dept gate. Admins skip it. Fails closed, no payload on refusal.
+- **Client**: kind plumbed through the related button; `outboundJourneyHtml_` reuses the shared
+  journey renderers; wording switches to OUTBOUND; dedicated not-entitled copy.
+- Disclosure bounded: no caller identity crosses (hash + timestamp dropped, names masked at
+  capture) — only the other dept's agent, org label, outcome, masked journey.
+- Tests 892 → 902 (4 capture + 6 entitlement, incl. the no-link-no-access pin); ci:ui passed.
+- Block: `.cycle/blocks/145-outbound-journey-link-broad-implement.md`.
+
+Open follow-on: no read-only preview exists for the OUTBOUND match specifically (the chain
+diagnostic reports the shape but not whether the match is unique) — worth adding before
+trusting the link at volume.
+
+**WHERE I LEFT OFF:** increment 145 committed + pushed to `claude/broad-scan-8dgd6m`
+(9 commits ahead of merged main, un-PR'd).
+
+### Increment 146 — outbound-link preview + the gate's missing arm (2026-08-24)
+
+`/broad-implement read-only preview for outbound match, not-entitled path from UI`.
+
+- **IT-5 (real defect)**: the Step 4 gate implemented only ONE of getCallJourney's two
+  authorization arms (F-4 fallback), not the dept-predicate arm. So a manager who reached the
+  assist record BY PREDICATE — and whose id is not an abandoned parent in their Missed report
+  (a sub-60s abandon emits no DQE sentinel) — was falsely refused a link they had just been
+  shown. THAT is what made the not-entitled path reachable from the UI; increment 145's
+  follow-on note had the reasoning backwards. Gate now mirrors both arms in the same order.
+  Pinned both ways.
+- **IT-4**: `previewOutboundAssistLinks(dateIso)` (CDR Tools menu, read-only, no Neon). Runs
+  the REAL buildInboundCallRecords_ and reports what capture would store — deliberately not a
+  parallel implementation, since the chain diagnostic's hand-written rule is what produced the
+  temporally impossible "resolution".
+- Tests 902 → 904; ci:ui passed. Harness: the Logger stub now does %s substitution (joining
+  args had let a malformed format string pass).
+- Block: `.cycle/blocks/146-outbound-preview-and-gate-arms-broad-implement.md`.
+
+Open: the journey drill is still unexercised by ci:ui (getCallJourney unmocked in the harness),
+so the outbound render + not-entitled copy are unit-pinned but never rendered under the gate.
+
+**WHERE I LEFT OFF:** increment 146 committed + pushed to `claude/broad-scan-8dgd6m`
+(10 commits ahead of merged main, un-PR'd). Owner to run the preview on a date or two.
+
+### Increment 147 — the journey drill enters the ci:ui gate (2026-08-24)
+
+`/broad-implement follow-on items` — the one actionable follow-on from 146.
+
+- **IT-6**: three client renderers from Steps 3/4 (origin line, `outboundJourneyHtml_`, the
+  not-entitled copy) were unit-pinned but had NEVER rendered in a browser. They were
+  unreachable by any driver because `getCallJourney` was unmocked (drive-smoke would flag the
+  call), so nothing clicked a "↳ path" button. Added a request-keyed mock + `drive-journey.js`
+  (14 checks) and wired it as a BLOCKING ci:ui stage.
+- Two mistakes the first run caught that reading would not have: the cards render into
+  `#dept-missed-detail` (a separate lazy fetch, not `#dept-missed-section`), and it settles
+  ~6 s — so the driver waits on the DOM condition, not the clock.
+- All three renderers worked on the first real click, so this found no defect. Pure coverage
+  against the next regression — the dept-selector class the .gs harness cannot see.
+- Harness-only: NO apps-script file changed, nothing to deploy for this increment.
+- Unit 904/904 unchanged; ci:ui full gate passed with the new stage (14/14).
+- Block: `.cycle/blocks/147-journey-drill-ui-gate-broad-implement.md`.
+
+Remaining follow-on: sub-60s internal abandons have no entry point (owner ruling).
+
+**WHERE I LEFT OFF:** increment 147 committed + pushed to `claude/broad-scan-8dgd6m`
+(11 commits ahead of merged main, un-PR'd). Owner still to run `previewOutboundAssistLinks`.
+
+### Increment 148 — shared leg trees: the Step-4 validation run pays off (2026-08-25)
+
+`/broad-implement 1 and 2` — the two fixes proposed after analyzing the owner's
+2026-08-24 `previewOutboundAssistLinks` output.
+
+**The validation verdict first.** 185 internal assist records: 28 outbound-linked, 64
+inbound-linked, 93 unlinked. The link HELD where it matters — the drill's population is
+the abandons (the receiving dept's path button hangs off a DQE queue-only sentinel,
+wait>60s), there were 12, and 11 got a requester link; both halves of the wait>60s subset
+were covered 3/3. Seven of the 12 were `A_Q_Spanish`, the exact translation-assist shape
+Step 4 was built for. No line failed the test the instrument exists for.
+
+**What it found: a CDR root is a leg TREE, not a call.** 6 of 28 outbound targets were
+themselves assist records, each by a different agent. A warm transfer puts two people's
+legs under one root, and that root satisfies BOTH capture gates (inbound_calls wants
+no-Incoming + a queue leg; outbound_calls wants no-Incoming + an answered external
+Outgoing leg), so one id names a row in both tables.
+
+- **IT-7**: `answered` for an internal-origin record was "any talk leg in the tree", so a
+  sibling's external customer leg marked a genuinely-abandoned assist `answered` —
+  shrinking the one population the drill serves (170 of 185 read `answered`). Now scoped
+  by the new `icLegFromOriginator_` (caller EXT or caller NAME; an external Outgoing leg
+  never qualifies). The NAME arm is load-bearing — the queue-fronted delivery leg renders
+  CALLER as `CallQueue (144)`.
+- **IT-7b** (prerequisite, found by a failing test, not by reading): the originator itself
+  came from `legs[0]`, which on a shared tree can be a colleague's leg that merely started
+  first — naming the wrong requester AND scoping IT-7 to the wrong person. Now the
+  earliest QUEUE leg. Timing fields stay on `legs[0]` deliberately.
+- **IT-8**: `previewOutboundAssistLinks` now flags each shared root inline and closes with
+  two counters — the overlap ratio and the drill's abandon population, separated from the
+  answered noise.
+- The abandon-leg PREFER-then-fall-back is the piece that keeps IT-7 from introducing a new
+  failure mode (a fan-out leg carrying the flag would otherwise downgrade a real abandon
+  to `missed`).
+- All descriptive: every metric query excludes `is_internal`, and `getCallJourney` has no
+  disposition filter. Tests 904 → 911; ci:ui full gate passed (unchanged, nothing client-side).
+- Block: `.cycle/blocks/148-shared-leg-tree-scoping-broad-implement.md`.
+
+Open follow-ons: `outbound_calls` also admits merged trees (left as-is, now measured);
+owner ruling on narrowing the capture to non-answered assists (~170 rows/day of no-reader
+Neon traffic); `call_start`/`call_date` still derive from `legs[0]`; sub-60s internal
+abandons still have no entry point.
+
+**WHERE I LEFT OFF:** increment 148 on `claude/broad-scan-8dgd6m`, un-PR'd. MOST URGENT
+operator item is unrelated to this increment: all three projects still run the rejected
+JDBC timeout params until redeployed with PR #256.
+
+### Increment 149 — the path drill's sheet fallback + the Neon connect memo (2026-08-26)
+
+`/broad-implement Phases 1-5` of the plan the owner approved, + the memo.
+
+Context that shaped it: the owner reported the 'Inbound Calls' tab is EMPTY (headers
+only) — the export trigger was never installed and the seed never ran, so the heatmap
+fallback has been running on nothing. That collapsed Phase 0 (no weight to measure)
+and inverted the rollout: deploy the 22-col export FIRST, then seed once Neon
+recovers, then install the trigger. Also today's log: a 53.7s getQcdAllDepartments
+that was mostly repeated failed Neon handshakes — the error text confirmed the JDBC
+revert deployed correctly (generic connect failure, not the unsupported-params
+throw); the repetition is ~54 callsites each opening their own connection.
+
+- **IT-9 (Phases 1-2)**: `Inbound Calls` cols 18-22 (Journey windowed by
+  INBOUND_EXPORT_JOURNEY_DAYS=90; origin/related always) +
+  `inboundCallJourneySheetFallback_` — same shaper, BOTH auth arms (the F-4 gate
+  reads the DQE sheet, so it survives the outage), sheet-derived miss reasons +
+  the new `fallback-gap`, hooked at no-conn AND the mid-query catch. Outbound arm
+  deliberately not covered (no sheet primary) and now SAYS so in the overlay.
+- **IT-10 (memo)**: `NEON_CONN_DOWN_MEMO_` in getDashboardNeonConn_ — per-execution
+  (plain var, never CacheService), one failed handshake per Neon-down request
+  instead of one per callsite; memoized skips still feed NEO-3 when asked.
+- Phase 3 client disclosure (kind-aware unavailable copy, fallback-gap message,
+  served-from-fallback caption); Phase 4: +2 suites (journey-fallback 11,
+  neon-conn-memo 4) + inbound-export extended; Phase 5 docs.
+- Tests 911 -> 928; ci:ui full gate green (client changed); INV-16 clean.
+- Block: `.cycle/blocks/149-journey-sheet-fallback-broad-implement.md`.
+
+Operator sequence when Neon recovers: seed `exportInboundCalls('<capture-start>')`
+once (cdr-report editor) -> install the daily export trigger. Deploy dashboard +
+cdr-report first, in that order relative to the seed.
+
+Open: outbound-arm fallback (second export tab, separate decision); the memo for
+the import-side builders if their logs ever show the same repetition; the two
+standing owner rulings (outbound_calls shared-tree overlap; narrowing the answered
+internal-assist capture).
+
+**WHERE I LEFT OFF:** increment 149 committed + pushed to `claude/broad-scan-8dgd6m`,
+un-PR'd per the skill default.
+
+### Reflect (2026-08-26) — first standalone /reflect, covering increments 139-149
+
+Net 9 − 2 = +7, but the headline is the CORRECTION: the implement blocks summed +4
+with zero failure modes, while the arc actually contained 1 CRITICAL new failure
+mode (HF-0, the JDBC params — scored "+1" by its own block) and 1 Moderate (the
+single-arm Step-4 gate). Both shipped inside RESILIENCE work and both were invisible
+to the harness by construction; the cycle's best catches came from instruments
+(previewOutboundAssistLinks, the owner's validation run), not the suite. Live rule:
+when a change's correctness is outside the harness's reach, stage the rollout.
+Invariant candidates INV-56..60 proposed (block `.cycle/blocks/149-a-reflect.md`);
+metrics.csv + estimates.csv seeded (first rows).
+
+Subsystem cycles since last Seams audit: 5
+
+### 2026-09-04 (late) — R28/R29 email family
+- Completed: R28 default admin BCC chokepoint (PR #283) + welcome email on a new grant (PR #284); R29 EmailKit v2 notice family for the welcome email and all 16 admin notices (block 169). Also merged this session: #280 rowDateIso_ memo, #281 Neon retention (phones gate, weekly prune, CDR_BACKFILL_BEFORE), #282 runbook fix.
+- Open follow-ons: report emails could adopt `band`; queue report keeps its own shell; pipeline-project failure emails stay plain.
+- Decisions: senders never call EmailKit directly (suites load selectively) — spec via `notice:`; appEsc_/appDashUrl_ live in Config.gs for that reason.
+- Where I left off: block 169 written; committing + PR for R29. Neon reclaim runbook (Operator State #57) is mid-execution by the owner (step B.2, backfillCDRHistory runs).
+
+### 2026-09-04 (later) — R30 uniform email headers, R31 daily digest freshness gate
+- Completed: R30 every ekShellHtml_ caller banded (PR #286); R31 daily digest freshness gate (block 170): DEFERRED + one-shot retry until the 12:00 cutoff, stale callout, window threaded into the send.
+- Root cause found for "blank digest tiles": tiles read the single previous-business-day window via computeSummary_, the WoW callout reads 14 days; 8 AM trigger fired before the import landed.
+- Open follow-ons: quiet-day callout on the summary digest; weekly/monthly ungated; DEFERRED tint in the Alerts modal.
+- Where I left off: block 170 written; committing + PR. Owner mid-runbook on Neon reclaim (Operator State #57 step B.2).
+
+### 2026-09-04 (latest) — R32 digest follow-ons
+- Completed: gate generalized to weekly/monthly (per-cadence one-shot retries), quiet-day "No calls recorded" callout, DEFERRED warn tint in the Alerts modal (block 171).
+- Remaining follow-ons: pipeline-project failure emails stay plain (no EmailKit there, by design); queue report keeps its shell.
+- Where I left off: block 171 written; committing + PR.
+
+### 2026-09-08 — R33…R38 Neon reclaim tools + Manual Export cost
+- Completed: R33 `backfillCDRPhonesOnly` (#288), R34 `backfillCDRMissingParents` (#290/#291), R35 inline parent upsert (#292), R36 coverage window wrappers (#293), R37 preview/prune Neon extra rows (#294); R38 (block 172): inline-literal DQE/QCD/CDR daily writers with bound fallback + block-delete `deleteHistoricalRowsForDate`.
+- Decisions: keep the bound insert as the oversize fallback rather than deleting it (parity pinned against it); size-pack statements (30 KB) rather than row-count chunks; re-pad the sheet to the prior getMaxRows so the post-state matches the old rewrite.
+- Open follow-ons: inbound derivation cost (~3.7 min/export); inbound/outbound/direct writers still bind params.
+- Where I left off: block 172 written; committing + PR. Owner must run the acceptance gate (one Manual Export + both parity checks CLEAN) before the remaining Aug 20–31 exports; then holiday property (2026-09-07), delete CDR_BACKFILL_BEFORE, retention prune, VACUUM FULL.
+
+### 2026-09-08 (later) — R39 Direct Call step
+- Completed: R38 accepted (PR #295; Aug 24 re-export 654 s vs 1003 s; DQE + QCD parity CLEAN). R39 (block 173): Direct writer block delete + inline upsert with bound fallback.
+- Decisions: keep `v | 0` in the inline tuple (bound parity) rather than neonSqlInt_; no sheet re-pad (old per-row delete shrank capacity too); the single-bind authoritative DELETE left as is.
+- Open follow-ons: three separate Raw Data reads per import; the ui.alert inflating the reported export time.
+- Where I left off: R38 (#295) + R39 (#296) MERGED; branch restarted from main. Owner-side runbook is COMPLETE: Aug 20-31 Manual Exports done, runNeonCoverageCheck clean on all four sheet-backed tables (only Sept 7 flagged, since resolved as a holiday), COMPANY_HOLIDAYS updated, CDR_BACKFILL_BEFORE deleted, retention trigger armed + prune at steady state (0 rows, no budget hit), VACUUM FULL run.
+- STILL OPEN (deploy confirmation, not code): (a) cdr-import pushed since R39 merged? The Aug exports all ran on R38, so R39's Direct-writer change may be in the repo but not live -- its acceptance signal is the processIntegratedHistory:Direct durationMs on the next import. (b) cdr-report pushed since R38 merged? It carries the INV-16 neonWrite.js twin plus three consumers (buildDQEHistoricalData.js, dbHistorical.js, neonbackfill.js); the guard checks the REPO, so a stale cdr-report deployment leaves the two LIVE copies drifted and its safety-net DQE build + backfill tools still binding params.
+
+### 2026-09-09 (later) — R40 per-execution memo on the sheet DQE DAL (Neon-outage fallback, Phase 1)
+- **Pre-work (owner's three confirmations, all verified in QueueReportEmail.gs):** on an error or an empty/partial REPORT nothing reaches subscribers, `QUEUE_REPORT_LAST_SENT` is not claimed (so the next poll retries), and only `getAdminEmails_()` is notified. Nuance reported rather than glossed: a partial DELIVERY failure (some addresses bounced) DOES claim the day and the successful recipients keep their copy — deliberate, so a retry cannot re-blast them.
+- **Completed:** `DQE_SHEET_ROWS_MEMO_` (block 177) — per-execution memo on `sheetFetchDqeRows_`, keyed `(from, to, includeMissedDetail)`, FIFO-capped at 6, body moved to `sheetFetchDqeRowsUncached_`. Six R40 pins in dal-cutover, all six mutation-tested.
+- **Decisions:** clone-on-read is load-bearing, not tidiness (six readers hand the result to `applyQueueSplitToRows_`, which mutates in place — an un-cloned memo leaks dept A's narrowing into dept B and passes every parity assertion while doing it); shallow clone suffices only because `slots` is always assigned, never index-mutated; per-execution not CacheService (a cross-request cache would need ingest invalidation the freshness tags don't provide at DAL granularity); measurement via `source=sheet-memo` log lines, no test asserting it is faster.
+- **Code family:** used **R40** — R32 was already the digest freshness gate. Checked the whole `R\d\d` space before assigning.
+- **C2 answered in-commit:** adding a SECOND per-execution DQE memo broke 8 tests in 2 suites on stale fixtures — the trap CLAUDE.md had documented in prose. Prose was sufficient for one memo and is not for two, so cross-file-pins now pins the family (`DQE_EXEC_MEMOS`) to reset together, with a discovery floor. Mutation-tested both directions.
+- **FINDING — Phase 1 reaches 2 of 7 readers.** Five DQE readers bypass the DAL entirely and never adopted R26b: `computeSummary_` (per DEPT — the N× multiplier that motivated the whole task), IndividualReport, InsightsReport, `computeActiveAgentsInRange_`, Alerts. Each does its own whole-sheet `getRange(2,1,lastRow-1,~35)` + getValues + getDisplayValues. Only MissedCallsReport + AgentHome use the DAL. Recorded in CLAUDE.md's span bullet as a KNOWN GAP so it is not rediscovered.
+- **Phase 1b (proposed, not started):** apply the R26b span transform to those five. Same proven change, ~60× per read, no memory retention, and no ownership reasoning needed since each keeps its own fetch. Not bundled — five readers with five column requirements is its own review surface.
+- **Phase 2 (unstarted, from the earlier plan):** per-caller failure policy + whole-run time budget.
+- **Where I left off:** block 177 written; `npm run ci` 1245 pass / 0 fail, INV-16 clean, ci:ui skips (no playwright locally). Committing next.
+- **Still open from 2026-09-08 (deploy confirmation, not code):** cdr-import and cdr-report pushes since R38/R39 merged — see the previous entry.
+
+### 2026-09-09 (latest) — R41 span-bound the five DAL-bypassing DQE readers (Neon-outage fallback, Phase 1b)
+- **Completed:** the R26b transform applied to `computeSummary_` (charged per DEPT), IndividualReport, InsightsReport, `computeActiveAgentsInRange_` and `alertRowsForDate_`, through ONE new shared `Data.gs::dqeWindowRowSpan_` (block 178). New suite `tests/unit/dqe-span-readers.test.js`, 7 pins, all mutation-tested.
+- **The trap, found by reading callers before writing code:** four of the five ALSO derive `deptQueueExts` from the same bulk grid, and that derivation needs every ext a roster agent EVER used — a naive span shrinks it, changes which floaters are recognized, and leaves every pre-existing test green. Split into `deptQueueExtsFromSheet_` (whole sheet, cols A..D) + the full-width span. That is the suite's central pin.
+- **Two mutations that could NOT fire, measured rather than assumed:** removing the read-side date filter in `computeSummary_` or IR leaves the suite green — computeSummary_ re-checks from/to + priorFrom/priorTo in its aggregation loop, IR buckets the trend against a fixed month-key list. Alerts is the ONE reader with no second gate, so that is where the filter is pinned. Written into the suite instead of contorting a fixture to force a pass — an assertion that cannot fail is worse than none.
+- **Decisions:** no cache-version bump (no aggregation rule changed; payload identity is pinned by a span-vs-full-scan equivalence test); `deptQueueExtsFromSheet_` deliberately does NOT reuse `deptQueueExtsForNeonReader_`, whose Neon-first preference is wrong for a reader that is on the sheet because Neon is off; `meta.rowsScanned` verified to come from `lastRow`, not the grid length.
+- **Code family:** R41 (R40 was Phase 1's memo; R32 was the digest freshness gate).
+- **Left deliberately undone:** `sheetFetchDqeRows_` still carries its own inline span — two implementations of one computation. A drift note sits in NeonRead.gs and CLAUDE.md; consolidation is a follow-on, not bundled here (6th reader, own review surface).
+- **CLAUDE.md corrected:** the span bullet's "five readers still bypass … a known gap" paragraph (written last session) is now FALSE and was replaced with the R41 rule + the all-history trap. Trimmed twice to stay under the 4 KB per-bullet ratchet, which fired on the first attempt.
+- **Where I left off:** block 178 written; `npm run ci` 1252 pass / 0 fail, INV-16 clean, ci:ui skips (no playwright locally). Committing next.
+- **Operator still owes (manual, needs a live deploy):** Regression Scenarios S6, S35, S13 first — they exercise the floater/ext derivation, the only place this change could alter behavior — then S1/S2/S11/S14/S20. Plus `runLiveSmoke` after deploy.
+- **Still open from 2026-09-08 (deploy confirmation, not code):** cdr-import and cdr-report pushes since R38/R39 merged.
+
+### 2026-09-09 (latest+1) — R42 span consolidation + R43 all-dept compute budget (Neon-outage Phase 2)
+- **Completed (R42):** `sheetFetchDqeRows_`'s inline span folded into `Data.gs::dqeWindowRowSpan_` — the follow-on block 178 left open. There is now exactly ONE span implementation. Best evidence it was worth doing: mutating the shared helper to a tail scan now fails SIX pins across dal-cutover AND dqe-span-readers, where it used to fail one.
+- **Completed (R43 / Phase 2):** `computeQcdAllDepartments_` bounds itself at `QCD_ALLDEPT_BUDGET_MS` (default 4 min, Script-Property override, NeonMirror's shape), stopping on a DEPT BOUNDARY and marking the payload `meta.partial`. Block 179.
+- **The budget is ~10 lines; the per-caller policy is the substance.** A partial payload has a NON-ZERO dept count, so the existing D-1 empty check could NOT have caught it — the subscriber email would have gone out with departments silently missing (absent reads as "no calls") and the sent-marker would then have stopped the real report going out that day. That is exactly the guarantee the owner asked me to confirm two sessions ago. Four callers enumerated, four decisions: subscriber blast REFUSES (marker not claimed, `PARTIAL <iso>` status, next poll retries); cache REFUSES (a 6h TTL would pin an incomplete report); web SHOWS + note; self-send SHOWS + discloses in the EMAIL body (refusing would block an admin mailing themselves a snapshot during the very outage that causes a partial, and a forwarded copy loses the web note).
+- **Decisions:** stop before a dept, never mid-dept — the company grand totals accumulate per dept, so a half-computed dept corrupts the verdict band; the budget accessor refuses 0/negative (a 0 budget makes every report partial — 8 tests catch it); no cache-version bump (a complete payload serializes identically, the partial fields being `undefined`).
+- **The Health classifier is a prefix ALLOWLIST**, so `PARTIAL` renders GREEN unless added — the same hole O-5 / D-1 / O-9 each patched by hand. Added + pinned.
+- **Code family:** R42, R43 (R40 = the memo, R41 = the five span readers).
+- **Where I left off:** block 179 written; `npm run ci` 1261 pass / 0 fail, INV-16 clean, module-deps in sync, ci:ui skips (no playwright locally). Committing next.
+- **Follow-ons opened:** the D-1 cache tests in qcd-report.test.js `delete` the real `computeQcdAllDepartments_` from the vm context instead of restoring it (worked around via a load-time capture, worth fixing properly); the budget is per-RUN, so one pathologically slow dept can still eat most of it; the other ~20 cut-over readers have no whole-run budget — none loops over depts, but that is an argument from structure, not measurement.
+- **Operator owes (manual, needs a live deploy):** S32 + S20, and S4/S1 for the span consolidation. Worth setting `QCD_ALLDEPT_BUDGET_MS=1` once to see the partial note render and confirm no email goes out.
+- **Still open from 2026-09-08 (deploy confirmation, not code):** cdr-import and cdr-report pushes since R38/R39 merged.
+
+### 2026-09-09 (latest+2) — R44 shared per-execution DQE grid memos (from a live 53s trace)
+- **Owner supplied a live 53.4s `getDepartmentSummary` log** (Sales + PAP combined view, 31.9k rows). Diagnosis: 142 rows out for ~16s in per dept — the cost was never the aggregation. The DATE COLUMN was read 3× (bounds + once per dept inside `dqeWindowRowSpan_`, ~7.4s each ≈ 22s) and the cols-A..D EXT GRID 2× (~8s each ≈ 16s). Both grids are dept-independent; every repeat returned identical bytes.
+- **Completed:** `dqeDateColumnIso_` (date column, once per execution, returned ISO-normalized so the per-row `rowDateIso_` pass goes too) + `dqeExtGrid_` (cols A..D, once per execution, shared by BOTH ext derivations incl. the Neon path's sheet fallback). Block 180. Four read-count pins, all mutation-tested; payload equality pinned separately so the memos can only change cost.
+- **Expected ~53s → ~30s for a 2-dept combined view** — arithmetic on the owner's numbers, NOT measured by me. The `[dqe-read] computeSummary_:<2nd dept>` line is the confirmation after deploy.
+- **R41 bounded the WIDTH of the windowed read; these are the two reads a span structurally cannot bound**, and nothing had bounded their COUNT. R40 made exactly this argument for the DAL's row sets — it was always true here and simply never made.
+- **The reset trap fired for real, twice.** The R40 family tripwire named five suites; a SIXTH (`individual-report.test.js`) broke and was NOT named, because the tripwire only sees suites that reset at least one member. **Measured the obvious widening** ("any suite building a DQE fixture must reset the family"): it flags 20 suites of which ~1 is real — mostly pipeline suites that never call a dashboard reader. Not shipped; the hole is documented in the tripwire itself so the next person knows why.
+- **Where I left off:** block 180 written; `npm run ci` 1265 pass / 0 fail, INV-16 clean, ci:ui skips. Committing next.
+- **Follow-ons opened:** the ext grid could go to CacheService anchored on `reportFreshnessTag_()` (~0 on warm cache, costs INV-30 anchor reasoning); `getDeptQueueExts_` is handed cols A..D but only reads C+D; **the CLAUDE.md span bullet is at 4026/4096 bytes** and now carries R25b/R26b/R40/R41/R42/R44 — the next addition trips the ratchet and the honest fix is moving incident detail to fix-history, not another trim.
+- **Operator owes:** S6/S35/S13 after deploy (the floater/ext path is the only place a stale ext grid could change an answer), then S1/S2/S4.
+
+### 2026-09-09 (latest+3) — R45 cross-request cache for the dept ext set
+- **Completed:** `deptExts:v1:<dept>:<freshnessTag>:<rosterHash>` on `deptQueueExtsFromSheet_` (block 181), TTL 6h. The Neon path's sheet fallback now delegates to the same function, so there is one cached derivation. R44's per-execution memo still covers a MISS; R45 removes the read from most requests.
+- **Checked the cap BEFORE designing:** the grid is ~128k cells, far past CacheService's ~100 KB per-value limit, so the grid is not a cacheable unit — only the derived SET (a few dozen strings) is.
+- **The key has two inputs because the value does.** Grid → freshness tag; dept ROSTER → `hashAgents_`. The tag does NOT move when `DO NOT EDIT!` is edited or Orphan Fix adds an agent, and a stale ext set changes which agents count as floaters (INV-53) — a wrong number, not an error. The override path returns before the lookup, so a Dept Config change takes effect immediately.
+- **Three of my first-draft pins did not fire, and each was the test's fault.** The tag test drove the tag through fixtures, but `install()` clears the cache and `reportFreshnessTag_` reads through the latestDate cache — rewritten to stub the tag. The isolation test mutated a cache MISS, never the hit path — rewritten to two hits. The throwing-cache mutation was equivalent along the tested path — re-targeted at removing the guard. Worth remembering: on cache work the first draft of a pin usually tests the miss path by accident.
+- **The S2 sweep caught the unregistered prefix immediately** — registered in SPECS + classified `tag` in ANCHOR_SPECS. The enforcement working as designed, twice in two sessions (R44 hit the memo-family tripwire the same way).
+- **Where I left off:** block 181 written; `npm run ci` 1271 pass / 0 fail, INV-16 clean, ci:ui skips. Committing next.
+- **Remaining per-request floor after R44+R45:** the date-column read (~7.4s, once) and the QCD grid (~7.7s, already once). The date column has the same shape as the ext set — dept-independent, changes only on ingest — so the same treatment applies if it is still the visible floor after deploy.
+- **Operator owes:** S6/S35/S13 after deploy, plus one deliberate check the unit tests cannot do — add an agent to a roster mid-day and confirm the floater view reflects it on the next load, not after the TTL.
+

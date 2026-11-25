@@ -246,6 +246,48 @@ test('F24: a STRIP-matched feed name also drills under its canonical name', func
 
 // ── Drillability contract ─────────────────────────────────────────────────
 
+// ── TT-1: the S2C-1 shape -- the agent's only talk leg is their own Outgoing leg
+// (caller = the agent's extension + name, callee = the customer's number). The
+// build and the drill credit it ONLY where the callee rule found no talk.
+const S2C1_ROWS = [
+  // P6: the S2C-1 shape -- 600s of talk on Anna's own Outgoing leg.
+  rawRow({ callId: 'P6', legId: 0, start: IN, talk: '0:10:00', caller: '103', callerName: 'Anna Smith',
+           callee: '+15551234567', calleeName: 'JOHN CUSTOMER', parentCall: 'N/A' }),
+  rawRow({ callId: 'Q6', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna Smith', parentCall: 'P6',
+           callerId: 'A_Q_CSR', answered: true }),
+  // P7: Anna HAS a callee-named talk leg (60s) AND an outside leg (900s): the
+  // fallback must not fire, so only the 60s counts.
+  rawRow({ callId: 'P7', legId: 0, start: IN, talk: '0:01:00', calleeName: 'Anna Smith', parentCall: 'N/A' }),
+  rawRow({ callId: 'P7', legId: 1, start: IN, talk: '0:15:00', caller: '103', callerName: 'Anna Smith',
+           callee: '+15559876543', calleeName: 'SOME INSURER', parentCall: 'N/A' }),
+  rawRow({ callId: 'Q7', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna Smith', parentCall: 'P7',
+           callerId: 'A_Q_CSR', answered: true }),
+  // P8: external on BOTH ends (a forwarded customer, no agent) -- never credited.
+  rawRow({ callId: 'P8', legId: 0, start: IN, talk: '0:20:00', caller: '+15550001111', callerName: 'Anna Smith',
+           callee: '+15552223333', calleeName: 'JANE CUSTOMER', parentCall: 'N/A' }),
+  rawRow({ callId: 'Q8', legId: 0, start: IN, caller: 'CallQueue(103)', calleeName: 'Anna Smith', parentCall: 'P8',
+           callerId: 'A_Q_CSR', answered: true }),
+];
+
+test('TT-1: the build credits the S2C-1 talk leg, only as a fallback', function () {
+  const base = scenario();
+  const s = scenario({ extraRows: S2C1_ROWS });
+  const toSec = function (t) { const p = String(t).split(':').map(Number); return p[0] * 3600 + p[1] * 60 + p[2]; };
+  assert.equal(toSec(s.cell.ttt) - toSec(base.cell.ttt), 600 + 60,
+    'P6 adds its 600s outgoing-leg talk; P7 adds only its callee leg (60s), never the 900s outside leg; P8 adds nothing');
+});
+
+test('TT-1: the drill attributes the same talk as the build (TTT and per-parent)', function () {
+  const s = scenario({ extraRows: S2C1_ROWS });
+  const out = s.drill(9);
+  assert.equal(out.summary.totalTalkStr, s.cell.ttt, 'the drill must mirror the build\'s TT-1 fallback');
+  const by = {};
+  out.groups.forEach(function (g) { by[g.parentCallId] = g.agentTalkSec; });
+  assert.equal(by.P6, 600);
+  assert.equal(by.P7, 60);
+  assert.equal(by.P8 || 0, 0);
+});
+
 test('every slot column maps to `missed`, and non-drillable columns refuse', function () {
   // Slot columns K..AC hold missed-ring times, so each must drill as missed;
   // a column the build does not derive from matchable rows must refuse
