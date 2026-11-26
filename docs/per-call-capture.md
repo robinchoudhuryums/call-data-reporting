@@ -418,7 +418,7 @@ INV-06 sync obligation; text `HH:MM:SS` in raw PST so it compares to
 **Out-of-window calls are RESEARCH data, never a dept metric (owner
 ruling)** -- report them separately, never in a dept total. Scoped surfaces:
 `compareInboundVsQcdAbandons_`, the whole `computeInboundReport_` payload
-(`inbound:v17`), and `getInboundInsurerDaily` (so the drill reconciles with
+(`inbound:v18`), and `getInboundInsurerDaily` (so the drill reconciles with
 the byInsurer row it hangs off). Two deliberate NON-scopings: `coverageStart`
 (answers "when did capture begin", not a dept metric) and **the abandon
 HEATMAP, already bounded by its own 8 AM-5 PM CST band -- the INV-18
@@ -505,7 +505,7 @@ and the SQL was run against Postgres 16 on a fixture (both shapes) before it
 shipped.
 
 **"Transfers not answered" is a SEPARATE tile, counted QCD's way (S2C-6,
-owner ruling 2026-09-28, `inbound:v17`).** CSRs are told to drop a transfer
+owner ruling 2026-09-28, `inbound:v18`).** CSRs are told to drop a transfer
 attempt after ~2 minutes on hold when the target never answers, and QCD counts
 that dropped attempt as an abandon for the TARGET queue. "Abandoned on hold"
 above deliberately does not (it counts callers who hung up), so the attempts

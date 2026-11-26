@@ -256,6 +256,9 @@
    * insDeltaBadge_ ({deltaPct, type} + valence).
    */
   function inboundDelta_(cur, prev, valence, isPp) {
+    // RH-2: no prior window (it started before capture) -> no badge, never a
+    // "+100%" read off a missing value.
+    if (prev === undefined || prev === null) return '';
     cur = Number(cur) || 0; prev = Number(prev) || 0;
     let dp;
     if (isPp) dp = cur - prev;
@@ -623,11 +626,28 @@
     el.style.display = '';
   }
 
+  /**
+   * RH-1 / RH-2 (broad-scan 2026-11-24): the server's plain-language notes on
+   * what the read reaches that the data no longer holds (the journey horizon,
+   * a prior window before capture). One note element, replaced each render.
+   */
+  function inboundRetentionNoteUpsert_(notes) {
+    const host = $('inbound-body');
+    if (!host) return;
+    const old = host.querySelector(':scope > .retention-note');
+    if (!notes || !notes.length) { if (old) old.remove(); return; }
+    const html = '<div class="ds-note retention-note" role="status">'
+      + notes.map(function (t) { return '<div>' + escapeHtml(t) + '</div>'; }).join('') + '</div>';
+    if (old) old.outerHTML = html;
+    else host.insertAdjacentHTML('afterbegin', html);
+  }
+
   function inboundRenderReport_(data, opts) {
     coverageNoteUpsert_('inbound-body', 'inbound',
       (data && data.meta && data.meta.from) || null, null,
       (data && data.meta && data.meta.coverageStart) || null);   // R12-26b
     excNoteUpsert_('inbound-body', (data && data.meta && data.meta.exceptionDays) || null);   // EXC-2 (#81)
+    inboundRetentionNoteUpsert_((data && data.meta && data.meta.retentionNotes) || null);   // RH-1 / RH-2
     inboundLastData = data;
     inboundDrillCache = {};   // drill-down series are per (range, dept)
     inboundCollapseDrill_();
@@ -637,9 +657,11 @@
       '(' + scopeLabel + ' · ' + (meta.from || '') + ' – ' + (meta.to || '') + ')';
     const cmp = $('inbound-compare-line');
     if (cmp) {
-      cmp.textContent = (meta.priorFrom && meta.priorTo)
-        ? 'Deltas compare against the immediately-preceding period: ' + meta.priorFrom + ' – ' + meta.priorTo
-        : '';
+      cmp.textContent = meta.priorBeforeCapture   // RH-2
+        ? 'No comparison: the prior period starts before the inbound records begin (' + meta.priorBeforeCapture + ').'
+        : ((meta.priorFrom && meta.priorTo)
+          ? 'Deltas compare against the immediately-preceding period: ' + meta.priorFrom + ' – ' + meta.priorTo
+          : '');
     }
 
     // Unavailable (Neon down / table missing) -> show the empty-state, hide body.
@@ -1290,6 +1312,7 @@
     lines.push(row(['Inbound Calls report', meta.from + ' to ' + meta.to]));
     lines.push(row(['Scope', meta.companyView ? 'All departments' : (meta.department || '')]));
     lines.push(row(['Prior window', meta.priorFrom + ' to ' + meta.priorTo]));
+    (meta.retentionNotes || []).forEach(function (t) { lines.push(row(['Note', t])); });   // RH-1 / RH-2
     lines.push('');
     lines.push(row(['KPI', 'Current', 'Prior']));
     const k = d.kpis || {}, p = d.kpisPrior || {};

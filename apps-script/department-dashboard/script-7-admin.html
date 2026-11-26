@@ -3814,6 +3814,13 @@
         + escapeHtml(fmtNumber(bo.quickDecline || 0)) + ' declined quickly, ' + escapeHtml(fmtNumber(bo.rangOut || 0)) + ' rang out, '
         + escapeHtml(fmtNumber(bo.voicemail || 0)) + ' went to voicemail' + (bo.unknown ? ', ' + escapeHtml(fmtNumber(bo.unknown)) + ' not timed' : '') + '.'
       : 'No transfer was tried again in the same department in these dates' + deptNote + '.';
+    // RH-1: the stored call paths behind these cases are kept a limited time.
+    if (m.journeyHeldFrom) {
+      $('tr-summary').innerHTML += ' <span class="al-hint">Call paths are kept for '
+        + escapeHtml(m.journeyHorizonDays ? m.journeyHorizonDays + ' days' : 'a limited time')
+        + ', so dates before ' + escapeHtml(m.journeyHeldFrom) + ' could not be read'
+        + (m.fromAsked ? ' (you asked from ' + escapeHtml(m.fromAsked) + ')' : '') + '.</span>';
+    }
     // P10: the availability columns show only when at least one attempt is known.
     const av = sum.avail || null;
     const hasAvail = !!(n && av && Number(av.known) > 0);
@@ -4380,7 +4387,8 @@
     const found = (res.suggestions || []).length;
     const parts = [shown ? shown + ' day' + (shown === 1 ? '' : 's') + ' to look at'
                          : (found ? 'Nothing left to look at' : 'Nothing stands out')];
-    parts.push(res.from + ' to ' + res.to);
+    parts.push(res.from + ' to ' + res.to
+      + (res.journeyHeldFrom ? ' (call paths are kept a limited time, so earlier days are not judged)' : ''));   // RH-1
     parts.push((Number(res.judged) || 0) + ' agent' + (Number(res.judged) === 1 ? '' : 's') + ' checked');
     const skip = res.notJudged || [];
     if (skip.length) {

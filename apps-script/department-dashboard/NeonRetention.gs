@@ -122,6 +122,29 @@ function neonRetentionSettings_(props) {
 }
 
 /**
+ * RH-1 (broad-scan 2026-11-24, scan F3): the earliest call_date whose stored
+ * `journey` can still be relied on, as ISO; '' when no prune is armed
+ * (NEON_RETENTION_ENABLED) and none has ever run (NEON_RETENTION_LAST) --
+ * then nothing has been cleared. The prune clears `call_date < CURRENT_DATE -
+ * journeyDays` in Neon (UTC) once a week, so this is the conservative edge:
+ * older journeys MAY still be held until the next run. Every reader that
+ * aggregates `journey` over a window says what lies before it (INV-69;
+ * neon-retention.test.js pins the readers).
+ */
+function neonJourneyHeldFromIso_(props, nowMs) {
+  try {
+    props = props || PropertiesService.getScriptProperties();
+    var armed = String(props.getProperty('NEON_RETENTION_ENABLED') || '') === 'true'
+      || !!props.getProperty('NEON_RETENTION_LAST');
+    if (!armed) return '';
+    var j = neonRetentionSettings_(props).journeyDays;
+    var d = new Date(nowMs != null ? nowMs : Date.now());
+    var held = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - j));
+    return held.toISOString().slice(0, 10);
+  } catch (e) { return ''; }
+}
+
+/**
  * PURE. The ordered step list for one run. Every statement is ctid-batched
  * (`WHERE ctid IN (SELECT ctid ... LIMIT n)`) and self-limiting, so it is
  * re-run safe: a step is done when a batch affects fewer than `batch` rows.

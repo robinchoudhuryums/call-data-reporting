@@ -352,3 +352,82 @@ test('storage: the verdict is informational without a cap, ok/warn at 80% with o
   assert.equal(h.call('neonStorageVerdict_', { dbBytes: 0, tables: [] }, 'junk').status, 'muted');
   assert.equal(h.call('neonStorageVerdict_', { dbBytes: 0, tables: [] }, 'junk').value, '0 MB on disk');
 });
+
+// ── RH-1 / RH-2 (broad-scan 2026-11-24, scans F3 / F4) ──────────────────────
+// INV-69: a retention floor must exceed the longest read window over a table
+// -- or the reader says what lies past it. `journey` is cleared after
+// journeyDays (floor 30) while the readers that aggregate it read up to a year
+// plus a prior window, so they disclose instead.
+test('RH-1: neonJourneyHeldFromIso_ -- empty until a prune is armed or has run, then UTC today minus journeyDays', function () {
+  const NOW = Date.UTC(2026, 10, 25, 3, 0, 0);   // 03:00 UTC = the prior evening in Chicago: UTC decides, as Neon's CURRENT_DATE does
+  const held = function (props) { h.state.props = props; return h.call('neonJourneyHeldFromIso_', null, NOW); };
+  try {
+    assert.equal(held({}), '', 'no prune armed and none has run: nothing was cleared');
+    assert.equal(held({ NEON_RETENTION_ENABLED: 'true' }), '2026-08-27', 'default 90 days');
+    assert.equal(held({ NEON_RETENTION_LAST: '2026-11-23T09:00:00Z' }), '2026-08-27', 'a prune that ran once still bounds the data');
+    assert.equal(held({ NEON_RETENTION_ENABLED: 'true', NEON_RETENTION_JOURNEY_DAYS: '10' }), '2026-10-26', 'the 30-day floor holds');
+  } finally { h.state.props = {}; }
+});
+
+test('RH-1: every dashboard reader of the stored journey discloses the horizon, or is listed with its reason', function () {
+  const REASON = {
+    'AgentDay.gs': 'its fidelity tiers + meta.degradedReason state each horizon (6d design)',
+    'AgentHome.gs': 'a missed ring\'s wait / ring time is left out, never guessed, where no journey is held',
+    'OutboundReport.gs': 'the journey reads are the editor-run research probes (#64 / #65), not a report',
+    'NeonRetention.gs': 'the prune itself',
+  };
+  const reads = /c\.journey|journey LIKE|journey::json|'c\.journey'|SELECT[^"\n]*\bjourney\b/;
+  fs.readdirSync(DASH).filter(function (f) { return /\.gs$/.test(f); }).forEach(function (f) {
+    const src = fs.readFileSync(path.join(DASH, f), 'utf8');
+    if (!reads.test(src) || REASON[f]) return;
+    assert.ok(/neonJourneyHeldFromIso_\(|journeyPrunedMeta_\(/.test(src),
+      f + ' reads the stored journey without saying what lies past the retention horizon (RH-1, INV-69)');
+  });
+});
+
+test('RH-1 / RH-2: the Inbound report says what its read reaches that the data no longer holds', function () {
+  const ib = loadGas({ files: ['Config.gs', 'Util.gs', 'NeonRetention.gs', 'InboundReport.gs'] });
+  const notes = function (pf, pt, cov, held) { return JSON.parse(JSON.stringify(ib.call('inboundRetentionNotes_', pf, pt, cov, held))); };
+  assert.deepEqual(notes('2026-10-01', '2026-10-31', '2026-07-10', ''), { notes: [], journeyHeldFrom: '', priorBeforeCapture: '' });
+  const j = notes('2026-08-01', '2026-08-31', '2026-07-10', '2026-08-27');
+  assert.equal(j.journeyHeldFrom, '2026-08-27');
+  assert.match(j.notes[0], /before 2026-08-27 the two transfer figures .* may be counted the older way/);
+  const c = notes('2026-06-01', '2026-06-30', '2026-07-10', '');
+  assert.equal(c.priorBeforeCapture, '2026-07-10');
+  assert.match(c.notes[0], /No comparison: the prior period \(2026-06-01 to 2026-06-30\) starts before the inbound records begin \(2026-07-10\)/);
+  // The payload drops the prior KPIs in that case; the page and the email draw no change.
+  const src = fs.readFileSync(path.join(DASH, 'InboundReport.gs'), 'utf8');
+  assert.match(src, /if \(retention\.priorBeforeCapture\) kpisPrior = null;/);
+  assert.match(src, /function inboundEmailDelta_\(cur, prev, goodUp\) \{\n  if \(prev === undefined \|\| prev === null\) return '';/);
+  const client = fs.readFileSync(path.join(DASH, 'script-9-inbound-direct.html'), 'utf8');
+  assert.match(client, /function inboundDelta_\(cur, prev, valence, isPp\) \{[\s\S]{0,200}if \(prev === undefined \|\| prev === null\) return '';/);
+  assert.match(client, /inboundRetentionNoteUpsert_\(\(data && data\.meta && data\.meta\.retentionNotes\) \|\| null\)/);
+});
+
+test('RH-1: Transfer retries and the partial-day suggestions start their read at the journey horizon', function () {
+  const NOW = Date.now();
+  const { rosterGrid } = require('../harness/fixtures');
+  const tr = loadGas({ files: ['Config.gs', 'Util.gs', 'Auth.gs', 'Data.gs', 'DeptConfig.gs', 'NeonRetention.gs', 'TransferRetries.gs'] });
+  tr.state.props = { ADMIN_EMAILS: 'admin@x.com', SPREADSHEET_ID: 'fake', NEON_RETENTION_ENABLED: 'true', NEON_RETENTION_JOURNEY_DAYS: '30' };
+  tr.state.userEmail = 'admin@x.com';
+  tr.state.spreadsheet = makeFakeSpreadsheet({ sheets: { 'DO NOT EDIT!': rosterGrid({ CSR: ['Anna, 101'] }) } });
+  const heldIso = tr.call('neonJourneyHeldFromIso_', null, NOW);
+  const day = function (n) { const d = new Date(heldIso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  let asked = null;
+  tr.ctx.getDashboardNeonConn_ = function () { return { close: function () {} }; };
+  tr.ctx.trFetchJourneyRows_ = function (c, f, t) { asked = [f, t]; return []; };
+  tr.ctx.trAvailAttacher_ = function () { return null; };
+  const out = JSON.parse(JSON.stringify(tr.call('getTransferRetries', { from: day(-40), to: day(5) })));
+  assert.deepEqual(asked, [heldIso, day(5)], 'the read starts at the horizon');
+  assert.equal(out.meta.from, heldIso);
+  assert.equal(out.meta.fromAsked, day(-40));
+  assert.equal(out.meta.journeyHorizonDays, 30);
+  asked = null;
+  const gone = JSON.parse(JSON.stringify(tr.call('getTransferRetries', { from: day(-50), to: day(-40) })));
+  assert.equal(asked, null, 'a window wholly past the horizon reads nothing');
+  assert.equal(gone.meta.journeyHeldFrom, heldIso);
+  assert.equal(gone.summary.cases, 0);
+  const src = fs.readFileSync(path.join(DASH, 'PartialDays.gs'), 'utf8');
+  assert.match(src, /if \(journeyHeldFrom\) from = journeyHeldFrom;\s*\n\s*const base = \{ department: dept, from: from,/,
+    'the suggestion look-back starts at the horizon before the spans are read');
+});

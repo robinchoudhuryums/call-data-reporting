@@ -3801,7 +3801,7 @@ When something looks wrong, before assuming a code bug, check:
     The callback, direct-line and Overview sections say which days THEIR
     figures leave out ("... These callback figures exclude it."), because
     they do not follow the admin "Include them" switch; the heatmap and the
-    insurer drill do follow it. Cached reports re-key on deploy (`inbound:v17`,
+    insurer drill do follow it. Cached reports re-key on deploy (`inbound:v18`,
     `inboundHeatmap:v5`, `outboundReport:v12`, `outboundDirect:v6`). **Still
     not covered:** the callbacks alert reason's own miss list (#78 -- it
     already skips the day as a workday), the admin-only Outbound report's

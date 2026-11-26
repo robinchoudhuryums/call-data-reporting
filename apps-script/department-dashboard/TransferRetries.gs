@@ -469,6 +469,20 @@ function getTransferRetries(req) {
   var out = { meta: { from: from, to: to, dept: dept, available: true, quickSecs: TR_QUICK_SECS_,
                       truncated: false, generatedAt: new Date().toISOString() },
               summary: null, cases: [], redirects: [] };
+  // RH-1 (broad-scan 2026-11-24, scan F3): cases are read from the stored
+  // call path, which the Neon prune clears after journeyDays (90 by default,
+  // as low as 30) -- the range cap is 92. Days past the horizon used to read
+  // as "no retries" with nothing said; the read starts at the horizon now,
+  // and the payload says so.
+  var held = (typeof neonJourneyHeldFromIso_ === 'function') ? neonJourneyHeldFromIso_() : '';
+  if (held && from < held) {
+    out.meta.fromAsked = from;
+    out.meta.journeyHeldFrom = held;
+    try { out.meta.journeyHorizonDays = neonRetentionSettings_(PropertiesService.getScriptProperties()).journeyDays; } catch (eH) { /* unknown */ }
+    if (to < held) { out.summary = trBuildFromRows_([], function () { return []; }, '', {}).summary; return out; }
+    from = held;
+    out.meta.from = held;
+  }
   var conn = null;
   try {
     conn = (typeof getDashboardNeonConn_ === 'function') ? getDashboardNeonConn_() : null;

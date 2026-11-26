@@ -476,8 +476,18 @@ function getPartialDaySuggestions(req) {
   end.setUTCDate(end.getUTCDate() - 1);                       // through yesterday: today has not landed
   const start = new Date(end.getTime());
   start.setUTCDate(start.getUTCDate() - (PARTIAL_SUGGEST_DAYS_ - 1));
-  const to = end.toISOString().slice(0, 10), from = start.toISOString().slice(0, 10);
+  const to = end.toISOString().slice(0, 10);
+  let from = start.toISOString().slice(0, 10);
+  // RH-1 (broad-scan 2026-11-24, scan F3): an inbound span comes only from the
+  // stored call path, which the Neon prune clears after journeyDays (as low as
+  // 30). A day past it kept only its outbound calls, so a whole day read as a
+  // short one and was suggested as partial -- the look-back starts at the
+  // horizon instead, and says so.
+  const held = (typeof neonJourneyHeldFromIso_ === 'function') ? neonJourneyHeldFromIso_() : '';
+  const journeyHeldFrom = (held && from < held) ? held : '';
+  if (journeyHeldFrom) from = journeyHeldFrom;
   const base = { department: dept, from: from, to: to, suggestions: [], truncated: false, judged: 0, notJudged: [] };
+  if (journeyHeldFrom) base.journeyHeldFrom = journeyHeldFrom;
   // P9 follow-on: how long the database read took rides in the payload (and
   // the log), so whether the read needs narrowing is a measured question --
   // it expands every inbound journey in the look-back, and its cost on the

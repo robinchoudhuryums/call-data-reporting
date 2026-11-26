@@ -70,7 +70,7 @@
 // v8 (B-4): inboundDeptPredicate_ + callJourneyDeptPredicate_ match queue
 // names case-insensitively (aligning with the Missed report + queue split).
 // v17: EXC-3 (#81 phase 3) -- the insurer daily drill (`:daily:`) leaves out exception days like its parent row.
-const INBOUND_CACHE_KEY_PREFIX = 'inbound:v17';  // v16: PC-9 the R49 06:00 floor for CSR-family entry queues (inboundWindowClause_). v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
+const INBOUND_CACHE_KEY_PREFIX = 'inbound:v18';  // v18: RH-1/RH-2 meta.retentionNotes (journey horizon; a prior window before capture) and kpisPrior null when the prior window starts before capture. v17: (see INV-30). v16: PC-9 the R49 06:00 floor for CSR-family entry queues (inboundWindowClause_). v15: S2C-6 kpis.xferUnanswered -- internal transfer attempts into the dept's queues nobody answered, QCD's > 60s rule, linked or not (a separate tile; Abandoned on hold unchanged). v14: S2C-2 counts a transfer abandon only when the CALLER's call ended by the time the transfer attempt did (an agent giving up on a consult and returning to the caller is not a caller abandon). v13: S2C-2 blind-transfer abandons count for the target too (company view gains them). v12: S2C-2 an on-hold abandon during an unanswered transfer counts for the TARGET dept (kpis.onHoldTransferIn/Out). v11: PCR-1/PCR-2 a parent's scope rolls in its children's raw aliases + final-dept labels (v10: P3 is_internal exclusion on priorDr/drOutside (v9: R24 working-day prior windows)
 const INBOUND_TOP_N = 50;
 // Cap the requested window so an over-wide range can't trigger an
 // unbounded Neon aggregation (mirrors CallerLookup's range guard). A
@@ -1313,10 +1313,13 @@ function sendInboundReportEmail(req) {
     band: { tone: 'neutral', glyph: '&#9776;' },   // R30: uniform banded header
     kicker: 'Call Data · Inbound calls',
     title: scopeLabel,
-    subtitle: dateLabel + ' · vs prior ' + priorLabel,
+    subtitle: dateLabel + (meta.priorBeforeCapture ? ' · no comparison' : ' · vs prior ' + priorLabel),
     preheader: scopeLabel + ': ' + fmtNum_(k.total) + ' inbound calls, '
       + (k.abandonRate || 0) + '% abandoned · ' + dateLabel,
     rowsHtml: ekExceptionNoteRow_(meta.exceptionDays)   // EXC-3 (#81)
+      + (meta.retentionNotes || []).map(function (t) {   // RH-1 / RH-2
+          return ekRow_('<div style="font-size:12px;color:#6b7280;line-height:1.5;">' + escapeHtmlServer_(t) + '</div>', '4px 26px');
+        }).join('')
       + ekRow_('<table style="border-collapse:collapse;width:100%;max-width:520px;">' + kpiRows + '</table>')
       + ekRow_(inboundEmailBreakdownTable_('By insurer', data.byInsurer)
           + inboundEmailBreakdownTable_('By advertised line', data.byDialIn), '4px 26px 6px'),
@@ -1333,6 +1336,33 @@ function sendInboundReportEmail(req) {
   return { to: email };
 }
 
+/**
+ * RH-1 / RH-2. PURE but for the retention settings read. The plain-language
+ * notes for an Inbound read whose earliest day is `readFromIso` (the prior
+ * window's start): the journey horizon (the two transfer figures read the
+ * stored call path) and a prior window that starts before capture.
+ * -> { notes: [string], journeyHeldFrom: iso|'', priorBeforeCapture: iso|'' }.
+ */
+function inboundRetentionNotes_(readFromIso, readToIso, coverageStart, heldFromIso) {
+  const out = { notes: [], journeyHeldFrom: '', priorBeforeCapture: '' };
+  let held = heldFromIso;
+  if (held === undefined) held = (typeof neonJourneyHeldFromIso_ === 'function') ? neonJourneyHeldFromIso_() : '';
+  if (held && readFromIso && readFromIso < held) {
+    out.journeyHeldFrom = held;
+    let days = null;
+    try { days = neonRetentionSettings_(PropertiesService.getScriptProperties()).journeyDays; } catch (e) { days = null; }
+    out.notes.push('Call paths are kept for ' + (days ? days + ' days' : 'a limited time') + ', so for days before '
+      + held + ' the two transfer figures (hung up while on hold, and transfers nobody picked up) may be counted the '
+      + 'older way. Compare them across that date with care.');
+  }
+  if (coverageStart && readFromIso && readFromIso < coverageStart) {
+    out.priorBeforeCapture = coverageStart;
+    out.notes.push('No comparison: the prior period (' + readFromIso + ' to ' + (readToIso || '') + ') starts before '
+      + 'the inbound records begin (' + coverageStart + '), so no change vs prior is shown.');
+  }
+  return out;
+}
+
 function fmtNum_(n) { return String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
 function inboundEmailDur_(sec) {
   sec = Math.max(0, Math.round(Number(sec) || 0));
@@ -1340,6 +1370,7 @@ function inboundEmailDur_(sec) {
   return m + ':' + String(s).padStart(2, '0');
 }
 function inboundEmailDelta_(cur, prev, goodUp) {
+  if (prev === undefined || prev === null) return '';   // RH-2: no prior window, no change
   cur = Number(cur) || 0; prev = Number(prev) || 0;
   if (prev === 0 && cur === 0) return '';
   const dp = prev === 0 ? 100 : Math.round(((cur - prev) / prev) * 100);
@@ -1996,11 +2027,18 @@ function computeInboundReport_(scope) {
       if (mapped) r.dial_in = mapped;
     });
     const kpis = inboundShapeKpis_(obj.kpis);
-    const kpisPrior = inboundShapeKpis_(obj.kpisPrior);
+    let kpisPrior = inboundShapeKpis_(obj.kpisPrior);
     inboundApplyXferTallies_(kpis, obj.xfer);            // S2C-2
     inboundApplyXferTallies_(kpisPrior, obj.xferPrior);
     inboundApplyXferUnanswered_(kpis, obj.xferUn);       // S2C-6
     inboundApplyXferUnanswered_(kpisPrior, obj.xferUnPrior);
+    // RH-1 / RH-2 (broad-scan 2026-11-24, scans F3 / F4): what the read reaches
+    // that the data no longer holds, said in the payload so the page, the CSV
+    // and the email all say it. A prior window that starts before capture
+    // compared a whole window with part of one (every change read as growth),
+    // so it is dropped, the Outbound tile's rule (6135).
+    const retention = inboundRetentionNotes_(prior.from, prior.to, obj.coverageStart || null);
+    if (retention.priorBeforeCapture) kpisPrior = null;
     return {
       meta: {
         from: from, to: to, available: true,
@@ -2009,6 +2047,9 @@ function computeInboundReport_(scope) {
         unmapped: false,
         priorFrom: prior.from, priorTo: prior.to,
         coverageStart: obj.coverageStart || null,   // R12-26b
+        priorBeforeCapture: retention.priorBeforeCapture || undefined,   // RH-2
+        journeyHeldFrom: retention.journeyHeldFrom || undefined,         // RH-1
+        retentionNotes: retention.notes.length ? retention.notes : undefined,
         rows: kpis.total, generatedAt: new Date().toISOString(),
         exceptionDays: (typeof exceptionDaysNoteFor_ === 'function')   // EXC-2 (#81; absent when none)
           ? exceptionDaysNoteFor_(from, to, scope.dept || null) : undefined,
